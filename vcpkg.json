@@ -1,0 +1,9 @@
+{
+  "name": "spray-trajectory-planning",
+  "version": "1.0.0",
+  "description": "机器人喷涂轨迹规划系统",
+  "dependencies": [
+    "vtk"
+  ],
+  "builtin-baseline": "d2452281016c6d77b6ef199d599d9929eafe4807"
+}

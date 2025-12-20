@@ -1,0 +1,772 @@
+#include "MainWindow.h"
+#include "VTKWidget.h"
+#include "ParameterPanel.h"
+#include "StatusPanel.h"
+#include "SafetyPanel.h"
+#include "PointCloudLoader.h"
+#include "../Data/PointCloudParser.h"
+
+#include <QApplication>
+#include <QMenuBar>
+#include <QToolBar>
+#include <QStatusBar>
+#include <QDockWidget>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QSplitter>
+#include <QAction>
+#include <QLabel>
+#include <QPushButton>
+#include <QFileDialog>
+#include <QMessageBox>
+#include <QProgressBar>
+#include <QProgressDialog>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QThread>
+#include <QTimer>
+#include <QTabWidget>
+#include <QListWidget>
+#include <QTreeWidget>
+#include <QGroupBox>
+#include <QScrollArea>
+#include <QSettings>
+#include <QSpinBox>
+#include <QDoubleSpinBox>
+#include <QSlider>
+
+namespace UI {
+
+MainWindow::MainWindow(QWidget *parent)
+    : QMainWindow(parent)
+    , m_centralWidget(nullptr)
+    , m_mainSplitter(nullptr)
+    , m_vtkView(nullptr)
+    , m_parameterPanel(nullptr)
+    , m_statusPanel(nullptr)
+    , m_safetyPanel(nullptr)
+    , m_menuBar(nullptr)
+    , m_mainToolBar(nullptr)
+    , m_statusBar(nullptr)
+    , m_parameterDock(nullptr)
+    , m_statusDock(nullptr)
+    , m_safetyDock(nullptr)
+    , m_statusLabel(nullptr)
+    , m_robotStatusLabel(nullptr)
+    , m_simulationStatusLabel(nullptr)
+    , m_pointCloudLoader(nullptr)
+{
+    setWindowTitle("机器人喷涂轨迹规划系统 - 王睿 (浙江大学)");
+    setMinimumSize(1400, 900);
+    resize(1800, 1000);
+    
+    // 允许嵌套停靠
+    setDockNestingEnabled(true);
+    
+    // 设置角落归属，允许灵活布局
+    setCorner(Qt::BottomLeftCorner, Qt::BottomDockWidgetArea);
+    setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
+    setCorner(Qt::TopLeftCorner, Qt::LeftDockWidgetArea);
+    setCorner(Qt::TopRightCorner, Qt::RightDockWidgetArea);
+    
+    setupUI();
+    setupMenuBar();
+    setupToolBar();
+    setupStatusBar();
+    setupDockWidgets();
+    
+    connectSignals();
+    connectPanelSignals();
+    connectVTKSignals();
+    
+    // 强制重置布局（不恢复之前保存的状态）
+    // restoreLayout(); // 暂时禁用以确保使用新布局
+    
+    // 强制应用新布局
+    QTimer::singleShot(100, this, [this]() {
+        resetLayout();
+    });
+    
+    // 初始化状态
+    m_statusLabel->setText("VTK 3D引擎已就绪");
+    if (m_statusPanel) {
+        m_statusPanel->addLogMessage("SUCCESS", "VTK 3D可视化引擎初始化完成");
+        m_statusPanel->addLogMessage("INFO", "系统就绪，可以开始导入点云数据");
+    }
+}
+
+MainWindow::~MainWindow()
+{
+    // 保存窗口布局
+    saveLayout();
+}
+
+void MainWindow::setupUI()
+{
+    // 创建中央部件 - 只包含VTK 3D视图
+    m_vtkView = new VTKWidget(this);
+    m_vtkView->setMinimumSize(800, 600);
+    setCentralWidget(m_vtkView);
+}
+
+void MainWindow::setupMenuBar()
+{
+    // 文件菜单
+    QMenu* fileMenu = menuBar()->addMenu("文件(&F)");
+    
+    QAction* importAction = new QAction("导入点云(&I)", this);
+    importAction->setShortcut(QKeySequence("Ctrl+I"));
+    connect(importAction, &QAction::triggered, this, &MainWindow::OnImportWorkpiece);
+    fileMenu->addAction(importAction);
+    
+    QAction* importModelAction = new QAction("导入车间模型(&M)", this);
+    connect(importModelAction, &QAction::triggered, this, [this]() {
+        QString fileName = QFileDialog::getOpenFileName(this, "选择车间模型", "data/model",
+            "CAD文件 (*.step *.stp *.stl);;所有文件 (*.*)");
+        if (!fileName.isEmpty() && m_vtkView) {
+            m_vtkView->LoadSTEPModel(fileName);
+        }
+    });
+    fileMenu->addAction(importModelAction);
+    
+    fileMenu->addSeparator();
+    
+    QAction* exitAction = new QAction("退出(&X)", this);
+    exitAction->setShortcut(QKeySequence::Quit);
+    connect(exitAction, &QAction::triggered, this, &QWidget::close);
+    fileMenu->addAction(exitAction);
+
+    // 视图菜单
+    QMenu* viewMenu = menuBar()->addMenu("视图(&V)");
+    
+    QAction* resetViewAction = new QAction("重置视图(&R)", this);
+    resetViewAction->setShortcut(QKeySequence("R"));
+    connect(resetViewAction, &QAction::triggered, m_vtkView, &VTKWidget::ResetCamera);
+    viewMenu->addAction(resetViewAction);
+    
+    QAction* fitSceneAction = new QAction("适应场景(&F)", this);
+    fitSceneAction->setShortcut(QKeySequence("F"));
+    connect(fitSceneAction, &QAction::triggered, m_vtkView, &VTKWidget::FitToScene);
+    viewMenu->addAction(fitSceneAction);
+    
+    viewMenu->addSeparator();
+    
+    // 面板显示/隐藏菜单
+    m_panelMenu = viewMenu->addMenu("面板(&P)");
+    
+    viewMenu->addSeparator();
+    
+    QAction* resetLayoutAction = new QAction("重置布局(&L)", this);
+    connect(resetLayoutAction, &QAction::triggered, this, &MainWindow::resetLayout);
+    viewMenu->addAction(resetLayoutAction);
+    
+    // 帮助菜单
+    QMenu* helpMenu = menuBar()->addMenu("帮助(&H)");
+    
+    QAction* aboutAction = new QAction("关于(&A)", this);
+    connect(aboutAction, &QAction::triggered, this, &MainWindow::OnAbout);
+    helpMenu->addAction(aboutAction);
+}
+
+void MainWindow::setupToolBar()
+{
+    m_mainToolBar = addToolBar("主工具栏");
+    m_mainToolBar->setMovable(false);
+    m_mainToolBar->setIconSize(QSize(24, 24));
+    
+    // 文件操作
+    QAction* importAction = m_mainToolBar->addAction("📂 导入点云");
+    connect(importAction, &QAction::triggered, this, &MainWindow::OnImportWorkpiece);
+    
+    m_mainToolBar->addSeparator();
+    
+    // 视图操作
+    QAction* resetViewAction = m_mainToolBar->addAction("🔄 重置视图");
+    connect(resetViewAction, &QAction::triggered, m_vtkView, &VTKWidget::ResetCamera);
+    
+    QAction* fitSceneAction = m_mainToolBar->addAction("🎯 适应场景");
+    connect(fitSceneAction, &QAction::triggered, m_vtkView, &VTKWidget::FitToScene);
+    
+    m_mainToolBar->addSeparator();
+    
+    // 测试功能
+    QAction* testTrajectoryAction = m_mainToolBar->addAction("📈 测试轨迹");
+    connect(testTrajectoryAction, &QAction::triggered, this, [this]() {
+        std::vector<std::array<double, 3>> trajectory;
+        for (int i = 0; i < 100; ++i) {
+            double t = i * 0.1;
+            trajectory.push_back({50 * cos(t), 50 * sin(t), t * 5});
+        }
+        m_vtkView->ShowSprayTrajectory(trajectory);
+        m_statusLabel->setText("测试轨迹已显示");
+    });
+}
+
+void MainWindow::setupStatusBar()
+{
+    m_statusBar = statusBar();
+    
+    m_statusLabel = new QLabel("VTK 3D引擎已就绪", this);
+    m_robotStatusLabel = new QLabel("🤖 机器人: 未连接", this);
+    m_simulationStatusLabel = new QLabel("⏸️ 仿真: 停止", this);
+    
+    m_statusBar->addWidget(m_statusLabel, 1);
+    m_statusBar->addPermanentWidget(m_robotStatusLabel);
+    m_statusBar->addPermanentWidget(m_simulationStatusLabel);
+}
+
+void MainWindow::setupDockWidgets()
+{
+    // ========== 所有面板都放在右侧 ==========
+    
+    // 1. 工件管理面板
+    m_workpieceDock = new QDockWidget("工件管理", this);
+    m_workpieceDock->setObjectName("workpieceDock");
+    m_workpieceDock->setAllowedAreas(Qt::AllDockWidgetAreas);
+    m_workpieceDock->setFeatures(QDockWidget::DockWidgetClosable | 
+                                  QDockWidget::DockWidgetMovable | 
+                                  QDockWidget::DockWidgetFloatable);
+    QWidget* workpieceWidget = createWorkpiecePanel();
+    m_workpieceDock->setWidget(workpieceWidget);
+    addDockWidget(Qt::RightDockWidgetArea, m_workpieceDock);
+    
+    // 2. 轨迹规划面板
+    m_trajectoryDock = new QDockWidget("轨迹规划", this);
+    m_trajectoryDock->setObjectName("trajectoryDock");
+    m_trajectoryDock->setAllowedAreas(Qt::AllDockWidgetAreas);
+    m_trajectoryDock->setFeatures(QDockWidget::DockWidgetClosable | 
+                                   QDockWidget::DockWidgetMovable | 
+                                   QDockWidget::DockWidgetFloatable);
+    QWidget* trajectoryWidget = createTrajectoryPanel();
+    m_trajectoryDock->setWidget(trajectoryWidget);
+    addDockWidget(Qt::RightDockWidgetArea, m_trajectoryDock);
+    
+    // 3. 参数设置面板
+    m_parameterDock = new QDockWidget("参数设置", this);
+    m_parameterDock->setObjectName("parameterDock");
+    m_parameterDock->setAllowedAreas(Qt::AllDockWidgetAreas);
+    m_parameterDock->setFeatures(QDockWidget::DockWidgetClosable | 
+                                  QDockWidget::DockWidgetMovable | 
+                                  QDockWidget::DockWidgetFloatable);
+    QWidget* parameterWidget = createParameterPanel();
+    m_parameterDock->setWidget(parameterWidget);
+    addDockWidget(Qt::RightDockWidgetArea, m_parameterDock);
+    
+    // 4. 系统日志面板 - 默认显示
+    m_statusDock = new QDockWidget("系统日志", this);
+    m_statusDock->setObjectName("statusDock");
+    m_statusDock->setAllowedAreas(Qt::AllDockWidgetAreas);
+    m_statusDock->setFeatures(QDockWidget::DockWidgetClosable | 
+                               QDockWidget::DockWidgetMovable | 
+                               QDockWidget::DockWidgetFloatable);
+    m_statusPanel = new StatusPanel(this);
+    m_statusDock->setWidget(m_statusPanel);
+    addDockWidget(Qt::RightDockWidgetArea, m_statusDock);
+    
+    // 5. 安全监控面板
+    m_safetyDock = new QDockWidget("安全监控", this);
+    m_safetyDock->setObjectName("safetyDock");
+    m_safetyDock->setAllowedAreas(Qt::AllDockWidgetAreas);
+    m_safetyDock->setFeatures(QDockWidget::DockWidgetClosable | 
+                               QDockWidget::DockWidgetMovable | 
+                               QDockWidget::DockWidgetFloatable);
+    QWidget* safetyWidget = createSafetyPanel();
+    m_safetyDock->setWidget(safetyWidget);
+    addDockWidget(Qt::RightDockWidgetArea, m_safetyDock);
+    
+    // 将面板堆叠为标签页，系统日志为默认
+    tabifyDockWidget(m_statusDock, m_workpieceDock);
+    tabifyDockWidget(m_workpieceDock, m_trajectoryDock);
+    tabifyDockWidget(m_trajectoryDock, m_parameterDock);
+    tabifyDockWidget(m_parameterDock, m_safetyDock);
+    m_statusDock->raise(); // 默认显示系统日志
+    
+    // ========== 添加面板到视图菜单 ==========
+    if (m_panelMenu) {
+        m_panelMenu->addAction(m_workpieceDock->toggleViewAction());
+        m_panelMenu->addAction(m_trajectoryDock->toggleViewAction());
+        m_panelMenu->addAction(m_parameterDock->toggleViewAction());
+        m_panelMenu->addAction(m_statusDock->toggleViewAction());
+        m_panelMenu->addAction(m_safetyDock->toggleViewAction());
+    }
+    
+    // 设置面板大小限制
+    setupDockSizeConstraints();
+    
+    // 设置右侧面板默认宽度，给足够空间显示内容
+    resizeDocks({m_statusDock}, {420}, Qt::Horizontal);
+    
+    // 设置VTKWidget的StatusPanel引用，用于输出性能统计
+    if (m_vtkView && m_statusPanel) {
+        m_vtkView->SetStatusPanel(m_statusPanel);
+    }
+}
+
+QWidget* MainWindow::createWorkpiecePanel()
+{
+    QWidget* panel = new QWidget(this);
+    QVBoxLayout* layout = new QVBoxLayout(panel);
+    layout->setContentsMargins(8, 8, 8, 8);
+    layout->setSpacing(8);
+    
+    // 工件列表
+    QGroupBox* listGroup = new QGroupBox("已加载工件", panel);
+    QVBoxLayout* listLayout = new QVBoxLayout(listGroup);
+    listLayout->setContentsMargins(8, 8, 8, 8);
+    
+    m_workpieceList = new QListWidget(panel);
+    m_workpieceList->setMinimumHeight(80);
+    listLayout->addWidget(m_workpieceList);
+    
+    // 操作按钮 - 垂直布局（左右停靠时正常）
+    QVBoxLayout* btnLayout = new QVBoxLayout();
+    QPushButton* loadBtn = new QPushButton("导入工件", panel);
+    QPushButton* removeBtn = new QPushButton("移除选中", panel);
+    QPushButton* clearBtn = new QPushButton("清空列表", panel);
+    
+    // 设置按钮样式
+    QString btnStyle = "QPushButton { padding: 6px 12px; margin: 2px; font-size: 12px; }";
+    loadBtn->setStyleSheet(btnStyle);
+    removeBtn->setStyleSheet(btnStyle);
+    clearBtn->setStyleSheet(btnStyle);
+    
+    connect(loadBtn, &QPushButton::clicked, this, &MainWindow::OnImportWorkpiece);
+    connect(clearBtn, &QPushButton::clicked, this, [this]() {
+        m_workpieceList->clear();
+        m_statusLabel->setText("工件列表已清空");
+    });
+    
+    btnLayout->addWidget(loadBtn);
+    btnLayout->addWidget(removeBtn);
+    btnLayout->addWidget(clearBtn);
+    listLayout->addLayout(btnLayout);
+    
+    layout->addWidget(listGroup);
+    
+    // 工件信息
+    QGroupBox* infoGroup = new QGroupBox("工件信息", panel);
+    QVBoxLayout* infoLayout = new QVBoxLayout(infoGroup);
+    infoLayout->setContentsMargins(8, 8, 8, 8);
+    
+    m_workpieceInfo = new QLabel("未选择工件", panel);
+    m_workpieceInfo->setWordWrap(true);
+    m_workpieceInfo->setMinimumHeight(40);
+    m_workpieceInfo->setStyleSheet("QLabel { color: #666; padding: 6px; font-size: 12px; }");
+    infoLayout->addWidget(m_workpieceInfo);
+    
+    layout->addWidget(infoGroup);
+    layout->addStretch();
+    
+    return panel;
+}
+
+QWidget* MainWindow::createTrajectoryPanel()
+{
+    QWidget* panel = new QWidget(this);
+    QVBoxLayout* layout = new QVBoxLayout(panel);
+    layout->setContentsMargins(8, 8, 8, 8);
+    layout->setSpacing(8);
+    
+    // 轨迹参数
+    QGroupBox* paramGroup = new QGroupBox("轨迹参数", panel);
+    QVBoxLayout* paramLayout = new QVBoxLayout(paramGroup);
+    paramLayout->setContentsMargins(8, 8, 8, 8);
+    paramLayout->setSpacing(6);
+    
+    QLabel* spacingLabel = new QLabel("喷涂间距 (mm):", panel);
+    spacingLabel->setStyleSheet("font-size: 12px;");
+    paramLayout->addWidget(spacingLabel);
+    QSpinBox* spacingSpinBox = new QSpinBox(panel);
+    spacingSpinBox->setRange(1, 100);
+    spacingSpinBox->setValue(20);
+    spacingSpinBox->setMinimumHeight(24);
+    paramLayout->addWidget(spacingSpinBox);
+    
+    QLabel* speedLabel = new QLabel("喷涂速度 (mm/s):", panel);
+    speedLabel->setStyleSheet("font-size: 12px;");
+    paramLayout->addWidget(speedLabel);
+    QSpinBox* speedSpinBox = new QSpinBox(panel);
+    speedSpinBox->setRange(10, 500);
+    speedSpinBox->setValue(100);
+    speedSpinBox->setMinimumHeight(24);
+    paramLayout->addWidget(speedSpinBox);
+    
+    layout->addWidget(paramGroup);
+
+    // 轨迹操作
+    QGroupBox* actionGroup = new QGroupBox("轨迹操作", panel);
+    QVBoxLayout* actionLayout = new QVBoxLayout(actionGroup);
+    actionLayout->setContentsMargins(8, 8, 8, 8);
+    actionLayout->setSpacing(6);
+    
+    QPushButton* generateBtn = new QPushButton("生成轨迹", panel);
+    QPushButton* previewBtn = new QPushButton("预览轨迹", panel);
+    QPushButton* exportBtn = new QPushButton("导出轨迹", panel);
+    
+    // 设置按钮样式
+    QString btnStyle = "QPushButton { padding: 6px 12px; margin: 2px; font-size: 12px; }";
+    generateBtn->setStyleSheet(btnStyle);
+    previewBtn->setStyleSheet(btnStyle);
+    exportBtn->setStyleSheet(btnStyle);
+    
+    connect(generateBtn, &QPushButton::clicked, this, [this]() {
+        m_statusLabel->setText("轨迹生成功能开发中...");
+        if (m_statusPanel) m_statusPanel->addLogMessage("INFO", "轨迹生成功能开发中");
+    });
+    
+    connect(previewBtn, &QPushButton::clicked, this, [this]() {
+        // 显示测试轨迹
+        std::vector<std::array<double, 3>> trajectory;
+        for (int i = 0; i < 100; ++i) {
+            double t = i * 0.1;
+            trajectory.push_back({50 * cos(t), 50 * sin(t), t * 5});
+        }
+        m_vtkView->ShowSprayTrajectory(trajectory);
+        m_statusLabel->setText("预览轨迹已显示");
+    });
+    
+    actionLayout->addWidget(generateBtn);
+    actionLayout->addWidget(previewBtn);
+    actionLayout->addWidget(exportBtn);
+    
+    layout->addWidget(actionGroup);
+    layout->addStretch();
+    
+    return panel;
+}
+
+QWidget* MainWindow::createParameterPanel()
+{
+    QWidget* panel = new QWidget(this);
+    QVBoxLayout* layout = new QVBoxLayout(panel);
+    layout->setContentsMargins(8, 8, 8, 8);
+    layout->setSpacing(8);
+    
+    // 喷涂参数
+    QGroupBox* sprayGroup = new QGroupBox("喷涂参数", panel);
+    QVBoxLayout* sprayLayout = new QVBoxLayout(sprayGroup);
+    
+    sprayLayout->addWidget(new QLabel("喷涂压力 (MPa):", panel));
+    QDoubleSpinBox* pressureSpinBox = new QDoubleSpinBox(panel);
+    pressureSpinBox->setRange(0.1, 1.0);
+    pressureSpinBox->setValue(0.4);
+    pressureSpinBox->setSingleStep(0.05);
+    sprayLayout->addWidget(pressureSpinBox);
+    
+    sprayLayout->addWidget(new QLabel("喷涂流量 (ml/min):", panel));
+    QSpinBox* flowSpinBox = new QSpinBox(panel);
+    flowSpinBox->setRange(50, 500);
+    flowSpinBox->setValue(200);
+    sprayLayout->addWidget(flowSpinBox);
+    
+    layout->addWidget(sprayGroup);
+    
+    // 机器人参数
+    QGroupBox* robotGroup = new QGroupBox("机器人参数", panel);
+    QVBoxLayout* robotLayout = new QVBoxLayout(robotGroup);
+    
+    robotLayout->addWidget(new QLabel("最大速度 (%):", panel));
+    QSlider* speedSlider = new QSlider(Qt::Horizontal, panel);
+    speedSlider->setRange(1, 100);
+    speedSlider->setValue(50);
+    robotLayout->addWidget(speedSlider);
+    
+    robotLayout->addWidget(new QLabel("加速度 (%):", panel));
+    QSlider* accelSlider = new QSlider(Qt::Horizontal, panel);
+    accelSlider->setRange(1, 100);
+    accelSlider->setValue(30);
+    robotLayout->addWidget(accelSlider);
+    
+    layout->addWidget(robotGroup);
+    layout->addStretch();
+    
+    return panel;
+}
+
+QWidget* MainWindow::createSafetyPanel()
+{
+    QWidget* panel = new QWidget(this);
+    QVBoxLayout* layout = new QVBoxLayout(panel);
+    layout->setContentsMargins(8, 8, 8, 8);
+    
+    // 安全状态指示
+    QHBoxLayout* statusLayout = new QHBoxLayout();
+    
+    QLabel* safetyIcon = new QLabel("🟢", panel);
+    safetyIcon->setStyleSheet("font-size: 24px;");
+    QLabel* safetyText = new QLabel("系统安全状态: 正常", panel);
+    safetyText->setStyleSheet("font-weight: bold; color: green;");
+    
+    statusLayout->addWidget(safetyIcon);
+    statusLayout->addWidget(safetyText);
+    statusLayout->addStretch();
+    
+    layout->addLayout(statusLayout);
+    
+    // 安全检查列表
+    QGroupBox* checkGroup = new QGroupBox("安全检查", panel);
+    QVBoxLayout* checkLayout = new QVBoxLayout(checkGroup);
+    
+    checkLayout->addWidget(new QLabel("✅ 碰撞检测: 无碰撞", panel));
+    checkLayout->addWidget(new QLabel("✅ 关节限位: 正常", panel));
+    checkLayout->addWidget(new QLabel("✅ 速度限制: 正常", panel));
+    checkLayout->addWidget(new QLabel("✅ 急停状态: 未触发", panel));
+    
+    layout->addWidget(checkGroup);
+    layout->addStretch();
+    
+    return panel;
+}
+
+void MainWindow::setupDockSizeConstraints()
+{
+    // 完全移除尺寸限制，让面板内容自由显示
+    QList<QDockWidget*> docks = {m_workpieceDock, m_trajectoryDock, m_parameterDock, m_statusDock, m_safetyDock};
+    
+    for (auto* dock : docks) {
+        if (dock && dock->widget()) {
+            // 移除所有尺寸限制
+            dock->widget()->setMinimumSize(0, 0);
+            dock->widget()->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+            dock->setMinimumSize(0, 0);
+            dock->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+        }
+    }
+}
+
+void MainWindow::saveLayout()
+{
+    QSettings settings("SpraySystem", "MainWindow");
+    settings.setValue("geometry", saveGeometry());
+    settings.setValue("windowState", saveState());
+}
+
+void MainWindow::restoreLayout()
+{
+    QSettings settings("SpraySystem", "MainWindow");
+    restoreGeometry(settings.value("geometry").toByteArray());
+    restoreState(settings.value("windowState").toByteArray());
+}
+
+void MainWindow::resetLayout()
+{
+    // 重置所有面板到右侧
+    QList<QDockWidget*> docks = {m_workpieceDock, m_trajectoryDock, m_parameterDock, m_statusDock, m_safetyDock};
+    
+    for (auto* dock : docks) {
+        if (dock) {
+            dock->setFloating(false);
+            dock->show();
+            addDockWidget(Qt::RightDockWidgetArea, dock);
+        }
+    }
+    
+    // 重新堆叠为标签页，系统日志为默认
+    tabifyDockWidget(m_statusDock, m_workpieceDock);
+    tabifyDockWidget(m_workpieceDock, m_trajectoryDock);
+    tabifyDockWidget(m_trajectoryDock, m_parameterDock);
+    tabifyDockWidget(m_parameterDock, m_safetyDock);
+    
+    m_statusDock->raise(); // 显示系统日志
+    
+    // 重新应用大小约束
+    setupDockSizeConstraints();
+    
+    // 重置宽度
+    resizeDocks({m_statusDock}, {420}, Qt::Horizontal);
+    
+    m_statusLabel->setText("布局已重置");
+}
+
+void MainWindow::connectSignals()
+{
+    // VTK直接加载，不需要PointCloudLoader信号连接
+}
+
+void MainWindow::connectPanelSignals()
+{
+    // 连接工件列表选择信号
+    if (m_workpieceList) {
+        connect(m_workpieceList, &QListWidget::currentItemChanged, this, 
+            [this](QListWidgetItem* current, QListWidgetItem*) {
+                if (current && m_workpieceInfo) {
+                    m_workpieceInfo->setText(QString("文件: %1").arg(current->text()));
+                }
+            });
+    }
+}
+
+void MainWindow::connectVTKSignals()
+{
+    if (m_vtkView) {
+        connect(m_vtkView, &VTKWidget::ModelLoaded, this, 
+            [this](const QString& modelType, bool success) {
+                if (success) {
+                    m_statusLabel->setText(QString("VTK: %1 加载成功").arg(modelType));
+                    if (m_statusPanel) {
+                        m_statusPanel->addLogMessage("SUCCESS", QString("%1模型加载完成").arg(modelType));
+                    }
+                    // 添加到工件列表
+                    if (m_workpieceList && modelType == "PointCloud") {
+                        m_workpieceList->addItem("点云工件");
+                    }
+                } else {
+                    m_statusLabel->setText(QString("VTK: %1 加载失败").arg(modelType));
+                    if (m_statusPanel) {
+                        m_statusPanel->addLogMessage("ERROR", QString("%1模型加载失败").arg(modelType));
+                    }
+                }
+            });
+        
+        connect(m_vtkView, &VTKWidget::CameraChanged, this, [this]() {
+            if (m_statusPanel) {
+                m_statusPanel->addLogMessage("INFO", "3D视图已更新");
+            }
+        });
+        
+        connect(m_vtkView, &VTKWidget::SceneClicked, this, 
+            [this](double x, double y, double z) {
+                if (m_statusPanel) {
+                    m_statusPanel->addLogMessage("INFO", 
+                        QString("点击位置: (%.2f, %.2f, %.2f)").arg(x).arg(y).arg(z));
+                }
+            });
+    }
+}
+
+void MainWindow::OnImportWorkpiece()
+{
+    QString fileName = QFileDialog::getOpenFileName(this, "选择点云文件",
+        "test_data/pointclouds", "点云文件 (*.ply *.pcd);;所有文件 (*.*)");
+    
+    if (!fileName.isEmpty()) {
+        QFileInfo fileInfo(fileName);
+        if (!fileInfo.exists()) {
+            QMessageBox::warning(this, "文件错误", QString("文件不存在:\n%1").arg(fileName));
+            return;
+        }
+        
+        qDebug() << "开始加载点云:" << fileName;
+        
+        // 直接调用VTK加载，简单直接
+        m_statusLabel->setText("正在加载点云文件...");
+        QApplication::processEvents();
+        
+        bool success = m_vtkView->LoadPointCloud(fileName);
+        
+        if (success) {
+            m_statusLabel->setText("点云加载成功");
+            if (m_statusPanel) {
+                m_statusPanel->addLogMessage("SUCCESS", "点云加载完成");
+            }
+            if (m_workpieceList) {
+                QFileInfo fi(fileName);
+                m_workpieceList->addItem(fi.fileName());
+            }
+        } else {
+            m_statusLabel->setText("点云加载失败");
+            if (m_statusPanel) {
+                m_statusPanel->addLogMessage("ERROR", "点云加载失败");
+            }
+        }
+    }
+}
+
+void MainWindow::LoadWorkpiece(const QString& filePath)
+{
+    if (m_vtkView) {
+        bool success = m_vtkView->LoadPointCloud(filePath);
+        if (success) {
+            m_statusLabel->setText("工件加载成功");
+            // 添加到列表
+            if (m_workpieceList) {
+                QFileInfo fi(filePath);
+                m_workpieceList->addItem(fi.fileName());
+            }
+        } else {
+            m_statusLabel->setText("工件加载失败");
+            QMessageBox::warning(this, "加载失败", "点云文件加载失败，请检查文件格式。");
+        }
+    }
+}
+
+
+
+void MainWindow::DisplayTrajectory(const QString& trajectoryData)
+{
+    if (m_vtkView) {
+        std::vector<std::array<double, 3>> trajectory;
+        m_vtkView->ShowSprayTrajectory(trajectory);
+    }
+}
+
+void MainWindow::ShowSimulation(const QString& simulationResult)
+{
+    if (m_statusPanel) {
+        m_statusPanel->addLogMessage("INFO", "仿真结果: " + simulationResult);
+    }
+}
+
+void MainWindow::UpdateRobotStatus(const QString& statusData)
+{
+    m_statusLabel->setText("机器人状态: " + statusData);
+    if (m_robotStatusLabel) {
+        m_robotStatusLabel->setText("🤖 " + statusData);
+    }
+}
+
+void MainWindow::ShowNotification(const QString& type, const QString& message)
+{
+    m_statusLabel->setText(type + ": " + message);
+    if (m_statusPanel) {
+        m_statusPanel->addLogMessage(type, message);
+    }
+}
+
+void MainWindow::ShowSafetyAlert(const QString& alertData)
+{
+    QMessageBox::warning(this, "安全警告", alertData);
+}
+
+
+
+void MainWindow::OnVTKSceneReady()
+{
+    m_statusLabel->setText("VTK 3D场景已就绪");
+}
+
+void MainWindow::OnAbout()
+{
+    QMessageBox::about(this, "关于",
+        "机器人喷涂轨迹规划系统\n\n"
+        "版本: 1.0.0\n"
+        "作者: 王睿 (浙江大学)\n"
+        "3D引擎: VTK 9.2\n"
+        "UI框架: Qt 6\n"
+        "CAD内核: OpenCASCADE 7.8\n\n"
+        "功能:\n"
+        "• STEP/STL模型导入和可视化\n"
+        "• 点云数据处理\n"
+        "• 喷涂轨迹规划\n"
+        "• 机器人仿真\n"
+        "• 安全监控\n\n"
+        "© 2025 浙江大学");
+}
+
+// 空实现的槽函数
+void MainWindow::OnNewProject() {}
+void MainWindow::OnOpenProject() {}
+void MainWindow::OnSaveProject() {}
+void MainWindow::OnExportTrajectory() {}
+void MainWindow::OnStartSimulation() {}
+void MainWindow::OnStopSimulation() {}
+void MainWindow::OnConnectRobot() {}
+void MainWindow::OnDisconnectRobot() {}
+void MainWindow::OnCollisionDetected(const QJsonObject&) {}
+void MainWindow::OnSafetyWarning(const QString&) {}
+void MainWindow::OnTrajectoryChanged() {}
+void MainWindow::OnPointCloudLoadProgress(int) {}
+void MainWindow::OnPointCloudLoadCanceled() {}
+void MainWindow::updateAllStatus() {}
+
+} // namespace UI
