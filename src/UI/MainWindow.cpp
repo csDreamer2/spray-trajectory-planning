@@ -4,7 +4,10 @@
 #include "StatusPanel.h"
 #include "SafetyPanel.h"
 #include "PointCloudLoader.h"
+#include "ModelTreeDockWidget.h"
+#include "STEPModelTreeWidget.h"
 #include "../Data/PointCloudParser.h"
+#include "../Data/STEPModelTree.h"
 
 #include <QApplication>
 #include <QMenuBar>
@@ -35,8 +38,6 @@
 #include <QDoubleSpinBox>
 #include <QSlider>
 
-namespace UI {
-
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , m_centralWidget(nullptr)
@@ -45,12 +46,14 @@ MainWindow::MainWindow(QWidget *parent)
     , m_parameterPanel(nullptr)
     , m_statusPanel(nullptr)
     , m_safetyPanel(nullptr)
+    , m_modelTreePanel(nullptr)
     , m_menuBar(nullptr)
     , m_mainToolBar(nullptr)
     , m_statusBar(nullptr)
     , m_parameterDock(nullptr)
     , m_statusDock(nullptr)
     , m_safetyDock(nullptr)
+    , m_modelTreeDock(nullptr)
     , m_statusLabel(nullptr)
     , m_robotStatusLabel(nullptr)
     , m_simulationStatusLabel(nullptr)
@@ -104,7 +107,7 @@ MainWindow::~MainWindow()
 void MainWindow::setupUI()
 {
     // 创建中央部件 - 只包含VTK 3D视图
-    m_vtkView = new VTKWidget(this);
+    m_vtkView = new UI::VTKWidget(this);
     m_vtkView->setMinimumSize(800, 600);
     setCentralWidget(m_vtkView);
 }
@@ -118,6 +121,11 @@ void MainWindow::setupMenuBar()
     importAction->setShortcut(QKeySequence("Ctrl+I"));
     connect(importAction, &QAction::triggered, this, &MainWindow::OnImportWorkpiece);
     fileMenu->addAction(importAction);
+    
+    QAction* importSTEPAction = new QAction("导入STEP模型(&S)", this);
+    importSTEPAction->setShortcut(QKeySequence("Ctrl+S"));
+    connect(importSTEPAction, &QAction::triggered, this, &MainWindow::OnImportSTEPModel);
+    fileMenu->addAction(importSTEPAction);
     
     QAction* importModelAction = new QAction("导入车间模型(&M)", this);
     connect(importModelAction, &QAction::triggered, this, [this]() {
@@ -141,12 +149,12 @@ void MainWindow::setupMenuBar()
     
     QAction* resetViewAction = new QAction("重置视图(&R)", this);
     resetViewAction->setShortcut(QKeySequence("R"));
-    connect(resetViewAction, &QAction::triggered, m_vtkView, &VTKWidget::ResetCamera);
+    connect(resetViewAction, &QAction::triggered, m_vtkView, &UI::VTKWidget::ResetCamera);
     viewMenu->addAction(resetViewAction);
     
     QAction* fitSceneAction = new QAction("适应场景(&F)", this);
     fitSceneAction->setShortcut(QKeySequence("F"));
-    connect(fitSceneAction, &QAction::triggered, m_vtkView, &VTKWidget::FitToScene);
+    connect(fitSceneAction, &QAction::triggered, m_vtkView, &UI::VTKWidget::FitToScene);
     viewMenu->addAction(fitSceneAction);
     
     viewMenu->addSeparator();
@@ -182,10 +190,10 @@ void MainWindow::setupToolBar()
     
     // 视图操作
     QAction* resetViewAction = m_mainToolBar->addAction("🔄 重置视图");
-    connect(resetViewAction, &QAction::triggered, m_vtkView, &VTKWidget::ResetCamera);
+    connect(resetViewAction, &QAction::triggered, m_vtkView, &UI::VTKWidget::ResetCamera);
     
     QAction* fitSceneAction = m_mainToolBar->addAction("🎯 适应场景");
-    connect(fitSceneAction, &QAction::triggered, m_vtkView, &VTKWidget::FitToScene);
+    connect(fitSceneAction, &QAction::triggered, m_vtkView, &UI::VTKWidget::FitToScene);
     
     m_mainToolBar->addSeparator();
     
@@ -259,11 +267,27 @@ void MainWindow::setupDockWidgets()
     m_statusDock->setFeatures(QDockWidget::DockWidgetClosable | 
                                QDockWidget::DockWidgetMovable | 
                                QDockWidget::DockWidgetFloatable);
-    m_statusPanel = new StatusPanel(this);
+    m_statusPanel = new UI::StatusPanel(this);
     m_statusDock->setWidget(m_statusPanel);
     addDockWidget(Qt::RightDockWidgetArea, m_statusDock);
     
-    // 5. 安全监控面板
+    // 5. STEP模型树面板
+    m_modelTreeDock = new QDockWidget("STEP模型树", this);
+    m_modelTreeDock->setObjectName("modelTreeDock");
+    m_modelTreeDock->setAllowedAreas(Qt::AllDockWidgetAreas);
+    m_modelTreeDock->setFeatures(QDockWidget::DockWidgetClosable | 
+                                  QDockWidget::DockWidgetMovable | 
+                                  QDockWidget::DockWidgetFloatable);
+    
+    // 创建STEP模型树控件（不是停靠窗口）
+    STEPModelTreeWidget* modelTreeWidget = new STEPModelTreeWidget(this);
+    m_modelTreeDock->setWidget(modelTreeWidget);
+    addDockWidget(Qt::RightDockWidgetArea, m_modelTreeDock);
+    
+    // 保存引用以便后续使用
+    m_modelTreePanel = modelTreeWidget;
+    
+    // 6. 安全监控面板
     m_safetyDock = new QDockWidget("安全监控", this);
     m_safetyDock->setObjectName("safetyDock");
     m_safetyDock->setAllowedAreas(Qt::AllDockWidgetAreas);
@@ -278,7 +302,8 @@ void MainWindow::setupDockWidgets()
     tabifyDockWidget(m_statusDock, m_workpieceDock);
     tabifyDockWidget(m_workpieceDock, m_trajectoryDock);
     tabifyDockWidget(m_trajectoryDock, m_parameterDock);
-    tabifyDockWidget(m_parameterDock, m_safetyDock);
+    tabifyDockWidget(m_parameterDock, m_modelTreeDock);
+    tabifyDockWidget(m_modelTreeDock, m_safetyDock);
     m_statusDock->raise(); // 默认显示系统日志
     
     // ========== 添加面板到视图菜单 ==========
@@ -286,6 +311,7 @@ void MainWindow::setupDockWidgets()
         m_panelMenu->addAction(m_workpieceDock->toggleViewAction());
         m_panelMenu->addAction(m_trajectoryDock->toggleViewAction());
         m_panelMenu->addAction(m_parameterDock->toggleViewAction());
+        m_panelMenu->addAction(m_modelTreeDock->toggleViewAction());
         m_panelMenu->addAction(m_statusDock->toggleViewAction());
         m_panelMenu->addAction(m_safetyDock->toggleViewAction());
     }
@@ -599,7 +625,7 @@ void MainWindow::connectPanelSignals()
 void MainWindow::connectVTKSignals()
 {
     if (m_vtkView) {
-        connect(m_vtkView, &VTKWidget::ModelLoaded, this, 
+        connect(m_vtkView, &UI::VTKWidget::ModelLoaded, this, 
             [this](const QString& modelType, bool success) {
                 if (success) {
                     m_statusLabel->setText(QString("VTK: %1 加载成功").arg(modelType));
@@ -618,13 +644,13 @@ void MainWindow::connectVTKSignals()
                 }
             });
         
-        connect(m_vtkView, &VTKWidget::CameraChanged, this, [this]() {
+        connect(m_vtkView, &UI::VTKWidget::CameraChanged, this, [this]() {
             if (m_statusPanel) {
                 m_statusPanel->addLogMessage("INFO", "3D视图已更新");
             }
         });
         
-        connect(m_vtkView, &VTKWidget::SceneClicked, this, 
+        connect(m_vtkView, &UI::VTKWidget::SceneClicked, this, 
             [this](double x, double y, double z) {
                 if (m_statusPanel) {
                     m_statusPanel->addLogMessage("INFO", 
@@ -668,6 +694,90 @@ void MainWindow::OnImportWorkpiece()
             if (m_statusPanel) {
                 m_statusPanel->addLogMessage("ERROR", "点云加载失败");
             }
+        }
+    }
+}
+
+void MainWindow::OnImportSTEPModel()
+{
+    QString fileName = QFileDialog::getOpenFileName(this, "选择STEP模型文件",
+        "data/model", "STEP文件 (*.step *.stp);;所有文件 (*.*)");
+    
+    if (!fileName.isEmpty()) {
+        QFileInfo fileInfo(fileName);
+        if (!fileInfo.exists()) {
+            QMessageBox::warning(this, "文件错误", QString("文件不存在:\n%1").arg(fileName));
+            return;
+        }
+        
+        qDebug() << "开始加载STEP模型:" << fileName;
+        
+        if (m_statusPanel) {
+            m_statusPanel->addLogMessage("INFO", QString("开始加载STEP文件: %1").arg(fileInfo.fileName()));
+        }
+        
+        // 显示STEP模型树面板
+        if (m_modelTreeDock) {
+            m_modelTreeDock->show();
+            m_modelTreeDock->raise();
+        }
+        
+        // 只加载STEP文件到模型树，暂时禁用VTK避免崩溃
+        if (m_modelTreePanel) {
+            m_statusLabel->setText("正在解析STEP文件结构...");
+            QApplication::processEvents();
+            
+            // 先断开之前可能存在的连接，避免重复连接
+            disconnect(m_modelTreePanel, &STEPModelTreeWidget::loadCompleted,
+                       this, nullptr);
+            
+            // 连接加载完成信号，暂时不加载VTK
+            connect(m_modelTreePanel, &STEPModelTreeWidget::loadCompleted,
+                    this, [this, fileName](bool success, const QString& message) {
+                        // 断开信号避免重复连接
+                        disconnect(m_modelTreePanel, &STEPModelTreeWidget::loadCompleted,
+                                   this, nullptr);
+                        
+                        if (success) {
+                            m_statusLabel->setText("STEP模型树构建完成");
+                            if (m_statusPanel) {
+                                m_statusPanel->addLogMessage("SUCCESS", "STEP模型树构建完成");
+                                m_statusPanel->addLogMessage("INFO", "注意：VTK 3D显示暂时禁用以确保稳定性");
+                            }
+                            
+                            // 暂时完全禁用VTK加载，避免崩溃
+                            qDebug() << "MainWindow: VTK 3D可视化已禁用，仅显示STEP模型树";
+                            /*
+                            // 延迟加载到VTK视图，使用更长的延迟确保稳定性
+                            QTimer::singleShot(2000, this, [this, fileName]() {
+                                if (m_vtkView) {
+                                    m_statusLabel->setText("正在加载3D可视化...");
+                                    if (m_statusPanel) {
+                                        m_statusPanel->addLogMessage("INFO", "开始3D可视化加载");
+                                    }
+                                    
+                                    // 使用快速预览模式，减少VTK加载时间和复杂度
+                                    try {
+                                        m_vtkView->LoadSTEPModel(fileName, LoadQuality::Fast);
+                                    } catch (...) {
+                                        if (m_statusPanel) {
+                                            m_statusPanel->addLogMessage("WARNING", "3D可视化加载失败，但模型树可正常使用");
+                                        }
+                                        m_statusLabel->setText("模型树加载成功，3D显示失败");
+                                    }
+                                }
+                            });
+                            */
+                        } else {
+                            m_statusLabel->setText("STEP模型加载失败");
+                            if (m_statusPanel) {
+                                m_statusPanel->addLogMessage("ERROR", QString("STEP模型加载失败: %1").arg(message));
+                            }
+                        }
+                    });
+            
+            // 开始加载STEP文件到模型树
+            m_modelTreePanel->loadSTEPFile(fileName);
         }
     }
 }
@@ -768,5 +878,3 @@ void MainWindow::OnTrajectoryChanged() {}
 void MainWindow::OnPointCloudLoadProgress(int) {}
 void MainWindow::OnPointCloudLoadCanceled() {}
 void MainWindow::updateAllStatus() {}
-
-} // namespace UI

@@ -2,13 +2,12 @@
 
 #include <QObject>
 #include <QStandardItemModel>
-#include <QTreeView>
 #include <QString>
 #include <QVariant>
-#include <QCheckBox>
 #include <memory>
 #include <vector>
 #include <map>
+#include <string>
 
 // OpenCASCADE includes
 #include <TopoDS_Shape.hxx>
@@ -143,14 +142,21 @@ private slots:
 
 private:
     /**
+     * @brief 递归清理节点的OpenCASCADE引用
+     */
+    void clearNodeReferences(std::shared_ptr<STEPTreeNode> node);
+
+    /**
      * @brief 递归解析STEP文档标签
      * @param label STEP标签
      * @param parent 父节点
      * @param level 当前层级
+     * @param maxDepth 最大递归深度，防止栈溢出
      */
     void parseSTEPLabel(const TDF_Label& label, 
                        std::shared_ptr<STEPTreeNode> parent, 
-                       int level = 0);
+                       int level = 0,
+                       int maxDepth = 100);
 
     /**
      * @brief 从STEP标签创建树节点
@@ -183,6 +189,22 @@ private:
     void calculateStats(std::shared_ptr<STEPTreeNode> node, ModelStats& stats) const;
 
     /**
+     * @brief 根据指针查找节点
+     * @param nodePtr 节点指针
+     * @return 找到的shared_ptr节点
+     */
+    std::shared_ptr<STEPTreeNode> findNodeByPointer(STEPTreeNode* nodePtr) const;
+
+    /**
+     * @brief 在树中递归查找节点
+     * @param current 当前节点
+     * @param target 目标指针
+     * @return 找到的节点
+     */
+    std::shared_ptr<STEPTreeNode> findNodeInTreeByPointer(
+        std::shared_ptr<STEPTreeNode> current, STEPTreeNode* target) const;
+
+    /**
      * @brief 获取STEP标签的名称
      * @param label STEP标签
      * @return 名称字符串
@@ -205,80 +227,11 @@ private:
     std::shared_ptr<STEPTreeNode> m_rootNode;       // 根节点
     QStandardItemModel* m_qtModel;                  // Qt模型
     
-    // 节点映射，用于快速查找
-    std::map<TDF_Label, std::shared_ptr<STEPTreeNode>> m_labelToNode;
+    // 节点映射，用于快速查找 - 使用字符串作为键而不是TDF_Label
+    std::map<std::string, std::shared_ptr<STEPTreeNode>> m_labelToNode;
     std::map<QString, std::vector<std::shared_ptr<STEPTreeNode>>> m_nameToNodes;
     
     bool m_isLoading;                               // 是否正在加载
     int m_totalLabels;                              // 总标签数
     int m_processedLabels;                          // 已处理标签数
-};
-
-/**
- * @brief STEP模型树控件
- * 
- * 集成了树形视图和模型管理的完整控件
- */
-class STEPModelTreeWidget : public QWidget {
-    Q_OBJECT
-
-public:
-    explicit STEPModelTreeWidget(QWidget* parent = nullptr);
-    ~STEPModelTreeWidget();
-
-    /**
-     * @brief 加载STEP文件
-     * @param filePath 文件路径
-     */
-    void loadSTEPFile(const QString& filePath);
-
-    /**
-     * @brief 获取模型树管理器
-     * @return STEPModelTree指针
-     */
-    STEPModelTree* getModelTree() const { return m_modelTree; }
-
-    /**
-     * @brief 获取树形视图
-     * @return QTreeView指针
-     */
-    QTreeView* getTreeView() const { return m_treeView; }
-
-signals:
-    /**
-     * @brief 选中节点改变信号
-     * @param selectedNodes 选中的节点列表
-     */
-    void selectionChanged(const std::vector<std::shared_ptr<STEPTreeNode>>& selectedNodes);
-
-    /**
-     * @brief 可见性改变信号
-     * @param visibleShapes 当前可见的形状列表
-     */
-    void visibilityChanged(const std::vector<TopoDS_Shape>& visibleShapes);
-
-private slots:
-    void onSelectionChanged();
-    void onNodeVisibilityChanged(std::shared_ptr<STEPTreeNode> node, bool visible);
-    void onModelTreeLoaded(bool success, const QString& message);
-    void onContextMenuRequested(const QPoint& pos);
-
-private:
-    void setupUI();
-    void setupContextMenu();
-    std::shared_ptr<STEPTreeNode> getNodeFromItem(QStandardItem* item) const;
-
-private:
-    STEPModelTree* m_modelTree;
-    QTreeView* m_treeView;
-    QVBoxLayout* m_layout;
-    
-    // 上下文菜单
-    QMenu* m_contextMenu;
-    QAction* m_showAction;
-    QAction* m_hideAction;
-    QAction* m_showOnlyAction;
-    QAction* m_expandAction;
-    QAction* m_collapseAction;
-    QAction* m_propertiesAction;
 };

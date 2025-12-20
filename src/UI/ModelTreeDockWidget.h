@@ -12,7 +12,7 @@
 #include <QSpinBox>
 #include <QSlider>
 
-#include "Data/STEPModelTree.h"
+#include "STEPModelTreeWidget.h"
 
 /**
  * @brief 模型树停靠窗口

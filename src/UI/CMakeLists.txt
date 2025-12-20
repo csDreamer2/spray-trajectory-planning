@@ -14,6 +14,8 @@ set(UI_SOURCES
     PointCloudLoader.cpp
     PointCloudLoader.h
     # STEP模型树UI组件
+    STEPModelTreeWidget.cpp
+    STEPModelTreeWidget.h
     ModelTreeDockWidget.cpp
     ModelTreeDockWidget.h
 )
@@ -32,6 +34,7 @@ target_link_libraries(UI
     VTK::GUISupportQt
     VTK::InteractionStyle
     VTK::IOPLY
+    Data  # 添加Data库链接
 )
 
 target_include_directories(UI PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

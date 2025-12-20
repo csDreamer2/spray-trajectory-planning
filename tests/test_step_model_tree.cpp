@@ -11,6 +11,7 @@
 #include <QDebug>
 
 #include "../src/Data/STEPModelTree.h"
+#include "../src/UI/STEPModelTreeWidget.h"
 #include "../src/UI/ModelTreeDockWidget.h"
 
 /**

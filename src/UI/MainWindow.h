@@ -30,6 +30,11 @@ class ParameterPanel;
 class StatusPanel;
 class SafetyPanel;
 class PointCloudLoader;
+class ModelTreeDockWidget;
+}
+
+class STEPModelTree;
+class STEPModelTreeWidget;
 
 class MainWindow : public QMainWindow
 {
@@ -51,6 +56,7 @@ private slots:
     void OnOpenProject();
     void OnSaveProject();
     void OnImportWorkpiece();
+    void OnImportSTEPModel();  // 新增：导入STEP模型
     void OnExportTrajectory();
     void OnStartSimulation();
     void OnStopSimulation();
@@ -93,12 +99,13 @@ private:
     QSplitter* m_mainSplitter;
     
     // VTK 3D视图
-    VTKWidget* m_vtkView;
+    UI::VTKWidget* m_vtkView;
     
     // 面板组件
-    ParameterPanel* m_parameterPanel;
-    StatusPanel* m_statusPanel;
-    SafetyPanel* m_safetyPanel;
+    UI::ParameterPanel* m_parameterPanel;
+    UI::StatusPanel* m_statusPanel;
+    UI::SafetyPanel* m_safetyPanel;
+    STEPModelTreeWidget* m_modelTreePanel;
     
     // 菜单和工具栏
     QMenuBar* m_menuBar;
@@ -112,6 +119,7 @@ private:
     QDockWidget* m_parameterDock;
     QDockWidget* m_statusDock;
     QDockWidget* m_safetyDock;
+    QDockWidget* m_modelTreeDock;
     
     // 工件面板组件
     QListWidget* m_workpieceList;
@@ -123,9 +131,7 @@ private:
     QLabel* m_simulationStatusLabel;
     
     // 点云加载器（暂时保留以兼容现有代码）
-    PointCloudLoader* m_pointCloudLoader;
+    UI::PointCloudLoader* m_pointCloudLoader;
 };
-
-} // namespace UI
 
 #endif // MAINWINDOW_H

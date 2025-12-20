@@ -25,6 +25,8 @@ set(DATA_SOURCES
     # STEP模型树相关文件
     STEPModelTree.cpp
     STEPModelTree.h
+    STEPModelTreeWorker.cpp
+    STEPModelTreeWorker.h
 )
 
 add_library(Data STATIC ${DATA_SOURCES})

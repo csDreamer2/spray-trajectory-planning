@@ -67,7 +67,7 @@ int main(int argc, char *argv[])
         }
         
         // 创建主窗口
-        UI::MainWindow mainWindow;
+        MainWindow mainWindow;
         mainWindow.show();
         
         return app.exec();

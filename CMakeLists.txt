@@ -110,6 +110,8 @@ target_link_libraries(SprayTrajectoryPlanning
     # OpenCASCADE核心库（Debug版本）
     TKernel TKMath TKBRep TKGeomBase TKGeomAlgo TKTopAlgo TKPrim
     TKSTEP TKIGES TKMesh TKXSBase TKXCAF TKLCAF TKV3d
+    # STEP CAF Control 需要的库
+    TKSTEPBase TKSTEP209 TKSTEPAttr TKXDESTEP TKDCAF
     UI
     Core
     Simulation
