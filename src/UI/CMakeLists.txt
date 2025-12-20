@@ -13,6 +13,9 @@ set(UI_SOURCES
     SafetyPanel.h
     PointCloudLoader.cpp
     PointCloudLoader.h
+    # STEP模型树UI组件
+    ModelTreeDockWidget.cpp
+    ModelTreeDockWidget.h
 )
 
 add_library(UI STATIC ${UI_SOURCES})

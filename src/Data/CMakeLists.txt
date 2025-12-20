@@ -22,6 +22,9 @@ set(DATA_SOURCES
     TrajectoryPlanner.h
     DataModels.cpp
     DataModels.h
+    # STEP模型树相关文件
+    STEPModelTree.cpp
+    STEPModelTree.h
 )
 
 add_library(Data STATIC ${DATA_SOURCES})
