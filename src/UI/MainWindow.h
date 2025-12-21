@@ -81,6 +81,7 @@ private:
     void connectSignals();
     void connectPanelSignals();
     void connectVTKSignals();
+    void connectModelTreeToVTK();  // 新增：连接模型树到VTK视图
     void updateAllStatus();
     void resetLayout();
     void saveLayout();

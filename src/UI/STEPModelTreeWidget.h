@@ -51,6 +51,12 @@ public:
     QTreeView* getTreeView() const { return m_treeView; }
 
     /**
+     * @brief 获取Qt模型
+     * @return QStandardItemModel指针
+     */
+    QStandardItemModel* getQtModel() const { return m_modelTree ? m_modelTree->getQtModel() : nullptr; }
+
+    /**
      * @brief 检查是否正在加载
      * @return 是否正在加载
      */

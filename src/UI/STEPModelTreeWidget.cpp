@@ -102,7 +102,17 @@ void STEPModelTreeWidget::setupUI()
     m_treeView->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_treeView->setContextMenuPolicy(Qt::CustomContextMenu);
     m_treeView->header()->setStretchLastSection(false);
-    m_treeView->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    
+    // 设置列宽：组件名称列更宽，其他列固定宽度
+    m_treeView->header()->setSectionResizeMode(0, QHeaderView::Interactive); // 组件名称列可调整
+    m_treeView->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents); // 类型列自适应
+    m_treeView->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents); // 可见列自适应
+    m_treeView->header()->setSectionResizeMode(3, QHeaderView::Stretch); // 标签列拉伸填充
+    
+    // 设置初始列宽
+    m_treeView->setColumnWidth(0, 250); // 组件名称列宽度为250像素
+    m_treeView->setColumnWidth(1, 80);  // 类型列宽度为80像素
+    m_treeView->setColumnWidth(2, 60);  // 可见列宽度为60像素
     
     m_layout->addWidget(m_treeView);
 }

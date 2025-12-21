@@ -159,6 +159,25 @@ private:
                        int maxDepth = 100);
 
     /**
+     * @brief 解析复合形状，提取子形状
+     * @param compoundShape 复合形状
+     * @param parent 父节点
+     * @param level 当前层级
+     * @param maxDepth 最大递归深度
+     */
+    void parseCompoundShape(const TopoDS_Shape& compoundShape,
+                           std::shared_ptr<STEPTreeNode> parent,
+                           int level,
+                           int maxDepth);
+
+    /**
+     * @brief 在STEP文档中查找形状对应的名称
+     * @param shape 要查找的形状
+     * @return 找到的名称，如果没找到返回空字符串
+     */
+    QString findShapeNameInDocument(const TopoDS_Shape& shape) const;
+
+    /**
      * @brief 从STEP标签创建树节点
      * @param label STEP标签
      * @param level 层级
