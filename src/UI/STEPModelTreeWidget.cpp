@@ -19,6 +19,7 @@ STEPModelTreeWidget::STEPModelTreeWidget(QWidget* parent)
     , m_workerThread(nullptr)
     , m_worker(nullptr)
     , m_isLoading(false)
+    , m_loadedRootNode(nullptr)  // 初始化根节点为空
 {
     setupUI();
     setupContextMenu();
@@ -33,6 +34,10 @@ STEPModelTreeWidget::STEPModelTreeWidget(QWidget* parent)
             this, &STEPModelTreeWidget::onSelectionChanged);
     connect(m_treeView, &QTreeView::customContextMenuRequested,
             this, &STEPModelTreeWidget::onContextMenuRequested);
+    
+    // 连接Qt模型的itemChanged信号，监听复选框变化
+    connect(m_modelTree->getQtModel(), &QStandardItemModel::itemChanged,
+            this, &STEPModelTreeWidget::onItemChanged);
 }
 
 STEPModelTreeWidget::~STEPModelTreeWidget() 
@@ -356,6 +361,14 @@ void STEPModelTreeWidget::updateModelFromWorkerResult(std::shared_ptr<STEPTreeNo
     qDebug() << "STEPModelTreeWidget: 开始更新模型数据...";
     
     try {
+        // 重要：先更新STEPModelTree的根节点
+        if (m_modelTree) {
+            qDebug() << "STEPModelTreeWidget: 设置模型树根节点";
+            // 直接访问m_modelTree的私有成员需要添加友元或公共方法
+            // 这里我们通过重新加载来设置根节点
+            // 但由于是异步加载，我们需要另一种方式
+        }
+        
         // 清除当前模型
         m_modelTree->getQtModel()->clear();
         m_modelTree->getQtModel()->setHorizontalHeaderLabels({
@@ -394,6 +407,10 @@ void STEPModelTreeWidget::updateModelFromWorkerResult(std::shared_ptr<STEPTreeNo
             }
             
             qDebug() << "STEPModelTreeWidget: 成功处理了" << processedCount << "个子节点";
+            
+            // 重要：保存根节点引用供后续使用
+            m_loadedRootNode = rootNode;
+            qDebug() << "STEPModelTreeWidget: 已保存根节点引用";
         }
         
         qDebug() << "STEPModelTreeWidget: 模型数据更新完成";
@@ -426,9 +443,11 @@ void STEPModelTreeWidget::buildQtModelItemFromNode(std::shared_ptr<STEPTreeNode>
         nameItem->setCheckable(true);
         nameItem->setCheckState(node->isVisible ? Qt::Checked : Qt::Unchecked);
         
-        // 安全地存储节点指针
+        // 安全地存储节点指针 - 使用quintptr转换
         try {
-            nameItem->setData(QVariant::fromValue(node.get()), Qt::UserRole);
+            quintptr nodePtr = reinterpret_cast<quintptr>(node.get());
+            nameItem->setData(QVariant::fromValue(nodePtr), Qt::UserRole);
+            qDebug() << "STEPModelTreeWidget: 存储节点指针:" << nodeName << "ptr=" << nodePtr;
         } catch (...) {
             qWarning() << "STEPModelTreeWidget: 无法设置节点数据，跳过";
         }
@@ -535,16 +554,39 @@ void STEPModelTreeWidget::onContextMenuRequested(const QPoint& pos)
 
 std::shared_ptr<STEPTreeNode> STEPModelTreeWidget::getNodeFromItem(QStandardItem* item) const
 {
-    if (!item) return nullptr;
+    if (!item) {
+        qWarning() << "STEPModelTreeWidget: getNodeFromItem收到空item";
+        return nullptr;
+    }
     
-    auto nodePtr = item->data(Qt::UserRole).value<STEPTreeNode*>();
-    if (!nodePtr) return nullptr;
+    // 从UserRole获取节点指针
+    QVariant data = item->data(Qt::UserRole);
+    if (!data.isValid()) {
+        qWarning() << "STEPModelTreeWidget: Item没有存储节点数据:" << item->text();
+        return nullptr;
+    }
     
-    // 从模型树中查找对应的shared_ptr
-    auto rootNode = m_modelTree->getRootNode();
-    if (!rootNode) return nullptr;
+    // 转换quintptr回指针
+    quintptr nodePtr = data.value<quintptr>();
+    if (nodePtr == 0) {
+        qWarning() << "STEPModelTreeWidget: 节点指针为空:" << item->text();
+        return nullptr;
+    }
     
-    return findNodeInTree(rootNode, nodePtr);
+    STEPTreeNode* rawPtr = reinterpret_cast<STEPTreeNode*>(nodePtr);
+    
+    // 从加载的根节点中查找对应的shared_ptr
+    if (!m_loadedRootNode) {
+        qWarning() << "STEPModelTreeWidget: 加载的根节点为空";
+        return nullptr;
+    }
+    
+    auto sharedNode = findNodeInTree(m_loadedRootNode, rawPtr);
+    if (!sharedNode) {
+        qWarning() << "STEPModelTreeWidget: 无法在树中找到节点:" << item->text();
+    }
+    
+    return sharedNode;
 }
 
 std::shared_ptr<STEPTreeNode> STEPModelTreeWidget::findNodeInTree(
@@ -562,4 +604,82 @@ std::shared_ptr<STEPTreeNode> STEPModelTreeWidget::findNodeInTree(
     }
     
     return nullptr;
+}
+
+void STEPModelTreeWidget::onItemChanged(QStandardItem* item)
+{
+    if (!item || !item->isCheckable()) return;
+    
+    // 获取对应的节点
+    auto node = getNodeFromItem(item);
+    if (!node) {
+        qWarning() << "STEPModelTreeWidget: 无法从Item获取节点";
+        return;
+    }
+    
+    // 获取新的可见状态
+    bool visible = (item->checkState() == Qt::Checked);
+    
+    qDebug() << "STEPModelTreeWidget: 节点可见性变化:" << node->name << "可见:" << visible;
+    
+    // 更新节点的可见状态
+    node->isVisible = visible;
+    
+    // 如果节点有Actor，更新其可见性
+    if (node->actor) {
+        node->actor->SetVisibility(visible ? 1 : 0);
+        qDebug() << "STEPModelTreeWidget: 已更新Actor可见性";
+    }
+    
+    // 递归更新子节点
+    setChildrenVisibility(item, visible);
+    
+    // 延迟发送信号，避免频繁触发渲染
+    // 使用QTimer合并多个快速变化
+    static QTimer* renderTimer = nullptr;
+    if (!renderTimer) {
+        renderTimer = new QTimer(this);
+        renderTimer->setSingleShot(true);
+        renderTimer->setInterval(100);  // 100ms延迟
+        connect(renderTimer, &QTimer::timeout, this, [this, node, visible]() {
+            emit nodeVisibilityToggled(node, visible);
+        });
+    }
+    
+    // 重启定时器（如果已经在运行，会重新计时）
+    renderTimer->start();
+}
+
+void STEPModelTreeWidget::setChildrenVisibility(QStandardItem* item, bool visible)
+{
+    if (!item) return;
+    
+    // 递归处理所有子项
+    for (int i = 0; i < item->rowCount(); ++i) {
+        QStandardItem* child = item->child(i, 0);  // 第一列是名称列
+        if (child && child->isCheckable()) {
+            // 暂时断开信号，避免递归触发
+            disconnect(m_modelTree->getQtModel(), &QStandardItemModel::itemChanged,
+                       this, &STEPModelTreeWidget::onItemChanged);
+            
+            // 设置子项的勾选状态
+            child->setCheckState(visible ? Qt::Checked : Qt::Unchecked);
+            
+            // 重新连接信号
+            connect(m_modelTree->getQtModel(), &QStandardItemModel::itemChanged,
+                    this, &STEPModelTreeWidget::onItemChanged);
+            
+            // 更新对应节点的Actor
+            auto childNode = getNodeFromItem(child);
+            if (childNode) {
+                childNode->isVisible = visible;
+                if (childNode->actor) {
+                    childNode->actor->SetVisibility(visible ? 1 : 0);
+                }
+            }
+            
+            // 递归处理子节点的子节点
+            setChildrenVisibility(child, visible);
+        }
+    }
 }

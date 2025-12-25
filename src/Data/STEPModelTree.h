@@ -19,6 +19,10 @@
 #include <TDF_Label.hxx>
 #include <TDataStd_Name.hxx>
 
+// VTK includes
+#include <vtkSmartPointer.h>
+#include <vtkActor.h>
+
 /**
  * @brief STEP文件模型树节点
  * 
@@ -34,8 +38,9 @@ struct STEPTreeNode {
     int level;                      // 层级深度
     std::vector<std::shared_ptr<STEPTreeNode>> children; // 子节点
     std::weak_ptr<STEPTreeNode> parent;                  // 父节点
+    vtkSmartPointer<vtkActor> actor; // VTK Actor用于3D显示
     
-    STEPTreeNode() : isVisible(true), isAssembly(false), level(0) {}
+    STEPTreeNode() : isVisible(true), isAssembly(false), level(0), actor(nullptr) {}
 };
 
 /**

@@ -36,6 +36,9 @@
 // Forward declarations for OpenCASCADE
 class TopoDS_Shape;
 
+// Forward declarations for STEP Model Tree
+struct STEPTreeNode;
+
 // Forward declarations for UI
 namespace UI {
     class StatusPanel;
@@ -88,6 +91,7 @@ public:
 
     // 模型加载
     bool LoadSTEPModel(const QString& filePath, LoadQuality quality = LoadQuality::Balanced);
+    bool LoadSTEPModelWithTree(const QString& filePath, std::shared_ptr<STEPTreeNode> rootNode, LoadQuality quality = LoadQuality::Balanced);  // 新增：支持模型树的加载
     bool LoadSTLModel(const QString& filePath);
     bool LoadPointCloud(const QString& filePath);
     bool LoadRobotModel(const QString& urdfPath);
@@ -110,6 +114,7 @@ public:
     void SetWorkpieceVisible(bool visible);
     void SetRobotVisible(bool visible);
     void SetTrajectoryVisible(bool visible);
+    void RefreshRender();  // 新增：刷新渲染
     
     // 系统日志接口
     void SetStatusPanel(StatusPanel* statusPanel);
@@ -154,6 +159,11 @@ private:
      * @brief 从PolyData创建VTK Actor并添加到场景
      */
     bool CreateVTKActorFromPolyData(vtkSmartPointer<vtkPolyData> polyData, const QString& modelName);
+    
+    /**
+     * @brief 为STEP节点创建VTK Actor（递归）
+     */
+    void CreateActorsForSTEPNode(std::shared_ptr<STEPTreeNode> node);
     
     /**
      * @brief 异步加载STEP文件

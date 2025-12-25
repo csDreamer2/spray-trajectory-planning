@@ -57,6 +57,12 @@ public:
     QStandardItemModel* getQtModel() const { return m_modelTree ? m_modelTree->getQtModel() : nullptr; }
 
     /**
+     * @brief 获取加载的根节点（用于VTK可视化）
+     * @return 根节点shared_ptr
+     */
+    std::shared_ptr<STEPTreeNode> getLoadedRootNode() const { return m_loadedRootNode; }
+
+    /**
      * @brief 检查是否正在加载
      * @return 是否正在加载
      */
@@ -76,6 +82,13 @@ signals:
     void visibilityChanged(const std::vector<TopoDS_Shape>& visibleShapes);
 
     /**
+     * @brief 节点可见性改变信号（用于VTK显示控制）
+     * @param node 改变的节点
+     * @param visible 新的可见状态
+     */
+    void nodeVisibilityToggled(std::shared_ptr<STEPTreeNode> node, bool visible);
+
+    /**
      * @brief 加载完成信号
      * @param success 是否成功
      * @param message 消息
@@ -87,6 +100,7 @@ private slots:
     void onNodeVisibilityChanged(std::shared_ptr<STEPTreeNode> node, bool visible);
     void onModelTreeLoaded(bool success, const QString& message);
     void onContextMenuRequested(const QPoint& pos);
+    void onItemChanged(QStandardItem* item);  // 新增：监听复选框变化
     
     // 异步加载相关槽函数
     void onWorkerProgressUpdate(int progress, const QString& message);
@@ -100,6 +114,7 @@ private:
     void showLoadingUI(bool show);
     void updateModelFromWorkerResult(std::shared_ptr<STEPTreeNode> rootNode);
     void buildQtModelItemFromNode(std::shared_ptr<STEPTreeNode> node, QStandardItem* parentItem);
+    void setChildrenVisibility(QStandardItem* item, bool visible);  // 新增：递归设置子节点可见性
     
     std::shared_ptr<STEPTreeNode> getNodeFromItem(QStandardItem* item) const;
     std::shared_ptr<STEPTreeNode> findNodeInTree(std::shared_ptr<STEPTreeNode> current, STEPTreeNode* target) const;
@@ -117,6 +132,9 @@ private:
     QThread* m_workerThread;
     STEPModelTreeWorker* m_worker;
     bool m_isLoading;
+    
+    // 保存加载的根节点（用于VTK可视化）
+    std::shared_ptr<STEPTreeNode> m_loadedRootNode;
     
     // 上下文菜单
     QMenu* m_contextMenu;

@@ -1,5 +1,6 @@
 #include "VTKWidget.h"
 #include "StatusPanel.h"
+#include "../Data/STEPModelTree.h"  // 添加STEP模型树头文件
 #include <QDebug>
 #include <QMessageBox>
 #include <QFileInfo>
@@ -40,6 +41,7 @@
 #include <gp_Pnt.hxx>
 #include <TopAbs_ShapeEnum.hxx>
 #include <IFSelect_ReturnStatus.hxx>
+#include <Standard_Failure.hxx>  // 添加异常处理头文件
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -1871,6 +1873,223 @@ void VTKWidget::onTimeStatistics(const QString& stage, int elapsedMs)
         
         // 更新状态标签显示总时间
         m_statusLabel->setText(QString("STEP模型加载完成 (耗时: %1秒)").arg(elapsedSec, 0, 'f', 1));
+    }
+}
+
+void VTKWidget::RefreshRender()
+{
+    // 使用QTimer异步刷新，避免阻塞UI线程
+    QTimer::singleShot(0, this, [this]() {
+        if (m_renderWindow) {
+            m_renderWindow->Render();
+        }
+        if (m_vtkWidget) {
+            m_vtkWidget->update();
+        }
+    });
+}
+
+void VTKWidget::CreateActorsForSTEPNode(std::shared_ptr<STEPTreeNode> node)
+{
+    if (!node) {
+        qWarning() << "VTKWidget: CreateActorsForSTEPNode收到空节点";
+        return;
+    }
+    
+    // 先递归处理子节点
+    if (!node->children.empty()) {
+        qDebug() << "VTKWidget: 递归处理" << node->children.size() << "个子节点:" << node->name;
+        for (auto& child : node->children) {
+            if (child) {
+                CreateActorsForSTEPNode(child);
+            }
+        }
+        // 如果有子节点，不为当前节点创建Actor（避免重复显示）
+        return;
+    }
+    
+    // 只为叶子节点（没有子节点的零件）创建Actor
+    if (!node->shape.IsNull()) {
+        try {
+            qDebug() << "VTKWidget: 为叶子节点创建Actor:" << node->name << "层级:" << node->level;
+            
+            // 检查渲染器是否有效
+            if (!m_renderer) {
+                qCritical() << "VTKWidget: 渲染器为空，无法创建Actor";
+                return;
+            }
+            
+            // 检查Shape类型
+            TopAbs_ShapeEnum shapeType = node->shape.ShapeType();
+            qDebug() << "VTKWidget: Shape类型:" << shapeType << "节点:" << node->name;
+            
+            // 只处理Solid、Shell、Face、Compound类型
+            if (shapeType != TopAbs_SOLID && 
+                shapeType != TopAbs_SHELL && 
+                shapeType != TopAbs_FACE && 
+                shapeType != TopAbs_COMPOUND) {
+                qDebug() << "VTKWidget: 跳过非几何体类型:" << node->name;
+                return;
+            }
+            
+            // 重要：先对Shape进行网格化，添加异常保护
+            qDebug() << "VTKWidget: 开始网格化Shape:" << node->name;
+            double meshDeflection = 1.0;  // 使用适中的精度
+            
+            try {
+                // 使用OpenCASCADE的网格化
+                BRepMesh_IncrementalMesh mesher(node->shape, meshDeflection, Standard_False, 0.5, Standard_True);
+                
+                if (!mesher.IsDone()) {
+                    qWarning() << "VTKWidget: 网格化未完成:" << node->name;
+                    // 继续尝试转换，可能部分网格化成功
+                }
+                
+                qDebug() << "VTKWidget: 网格化完成:" << node->name;
+                
+            } catch (const Standard_Failure& e) {
+                qCritical() << "VTKWidget: 网格化OpenCASCADE异常:" << node->name << e.GetMessageString();
+                return;
+            } catch (const std::exception& e) {
+                qCritical() << "VTKWidget: 网格化标准异常:" << node->name << e.what();
+                return;
+            } catch (...) {
+                qCritical() << "VTKWidget: 网格化未知异常:" << node->name;
+                return;
+            }
+            
+            // 转换Shape为VTK PolyData
+            vtkSmartPointer<vtkPolyData> polyData = nullptr;
+            try {
+                polyData = ConvertOCCTToVTK(node->shape);
+            } catch (const Standard_Failure& e) {
+                qCritical() << "VTKWidget: 转换OpenCASCADE异常:" << node->name << e.GetMessageString();
+                return;
+            } catch (const std::exception& e) {
+                qCritical() << "VTKWidget: 转换标准异常:" << node->name << e.what();
+                return;
+            } catch (...) {
+                qCritical() << "VTKWidget: 转换未知异常:" << node->name;
+                return;
+            }
+            
+            if (!polyData) {
+                qWarning() << "VTKWidget: ConvertOCCTToVTK返回空指针:" << node->name;
+                return;
+            }
+            
+            int numPoints = polyData->GetNumberOfPoints();
+            if (numPoints == 0) {
+                qWarning() << "VTKWidget: PolyData没有点:" << node->name;
+                return;
+            }
+            
+            qDebug() << "VTKWidget: PolyData转换成功，点数:" << numPoints;
+            
+            // 创建Mapper
+            vtkSmartPointer<vtkPolyDataMapper> mapper = vtkSmartPointer<vtkPolyDataMapper>::New();
+            mapper->SetInputData(polyData);
+            
+            // 创建Actor
+            node->actor = vtkSmartPointer<vtkActor>::New();
+            node->actor->SetMapper(mapper);
+            
+            // 设置显示属性
+            // 根据层级设置不同颜色
+            double r = 0.3 + (node->level % 3) * 0.2;
+            double g = 0.4 + (node->level % 4) * 0.15;
+            double b = 0.5 + (node->level % 5) * 0.1;
+            node->actor->GetProperty()->SetColor(r, g, b);
+            node->actor->GetProperty()->SetSpecular(0.3);
+            node->actor->GetProperty()->SetSpecularPower(20);
+            
+            // 设置初始可见性
+            node->actor->SetVisibility(node->isVisible ? 1 : 0);
+            
+            // 添加到渲染器
+            m_renderer->AddActor(node->actor);
+            
+            qDebug() << "VTKWidget: Actor创建并添加成功:" << node->name << "点数:" << numPoints;
+            
+        } catch (const Standard_Failure& e) {
+            qCritical() << "VTKWidget: 创建Actor OpenCASCADE异常:" << node->name << e.GetMessageString();
+        } catch (const std::exception& e) {
+            qCritical() << "VTKWidget: 创建Actor标准异常:" << node->name << e.what();
+        } catch (...) {
+            qCritical() << "VTKWidget: 创建Actor未知异常:" << node->name;
+        }
+    } else {
+        qDebug() << "VTKWidget: 节点Shape为空，跳过:" << node->name;
+    }
+}
+
+bool VTKWidget::LoadSTEPModelWithTree(const QString& filePath, std::shared_ptr<STEPTreeNode> rootNode, LoadQuality quality)
+{
+    qDebug() << "=== VTKWidget::LoadSTEPModelWithTree 开始 ===";
+    
+    if (!rootNode) {
+        qCritical() << "VTKWidget: 根节点为空";
+        m_statusLabel->setText("错误: 根节点为空");
+        return false;
+    }
+    
+    if (!m_renderer) {
+        qCritical() << "VTKWidget: 渲染器为空";
+        m_statusLabel->setText("错误: 渲染器未初始化");
+        return false;
+    }
+    
+    if (!m_renderWindow) {
+        qCritical() << "VTKWidget: 渲染窗口为空";
+        m_statusLabel->setText("错误: 渲染窗口未初始化");
+        return false;
+    }
+    
+    qDebug() << "VTKWidget: 开始为STEP模型树创建Actors";
+    qDebug() << "VTKWidget: 根节点名称:" << rootNode->name;
+    qDebug() << "VTKWidget: 根节点子节点数:" << rootNode->children.size();
+    
+    m_statusLabel->setText("正在创建3D可视化...");
+    QApplication::processEvents();
+    
+    try {
+        // 递归为所有节点创建Actor
+        qDebug() << "VTKWidget: 开始递归创建Actors...";
+        CreateActorsForSTEPNode(rootNode);
+        qDebug() << "VTKWidget: Actors创建完成";
+        
+        // 重置相机以适应场景
+        qDebug() << "VTKWidget: 重置相机...";
+        m_renderer->ResetCamera();
+        m_renderer->ResetCameraClippingRange();
+        
+        // 刷新渲染
+        qDebug() << "VTKWidget: 刷新渲染...";
+        RefreshRender();
+        
+        m_statusLabel->setText("STEP模型加载完成");
+        qDebug() << "VTKWidget: STEP模型树Actors创建完成";
+        
+        emit ModelLoaded("STEP", true);
+        
+        qDebug() << "=== VTKWidget::LoadSTEPModelWithTree 成功完成 ===";
+        return true;
+        
+    } catch (const Standard_Failure& e) {
+        qCritical() << "VTKWidget: OpenCASCADE异常:" << e.GetMessageString();
+        m_statusLabel->setText("错误: OpenCASCADE异常");
+        emit ModelLoaded("STEP", false);
+        return false;
+    } catch (const std::exception& e) {
+        qCritical() << "VTKWidget: 创建STEP模型树Actors异常:" << e.what();
+        m_statusLabel->setText("错误: 创建3D可视化失败");
+        emit ModelLoaded("STEP", false);
+        return false;
+    } catch (...) {
+        qCritical() << "VTKWidget: 创建STEP模型树Actors未知异常";
+        m_statusLabel->setText("错误: 未知错误");
+        emit ModelLoaded("STEP", false);
+        return false;
     }
 }
 
