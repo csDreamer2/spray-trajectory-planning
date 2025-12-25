@@ -279,11 +279,14 @@ void STEPModelTreeWidget::onWorkerModelTreeLoaded(bool success, const QString& m
                         updateModelFromWorkerResult(rootNode);
                         
                         // 再次延迟UI更新
-                        QTimer::singleShot(10, this, [this]() {
+                        QTimer::singleShot(100, this, [this]() {
                             try {
                                 qDebug() << "STEPModelTreeWidget: 开始UI更新...";
-                                m_treeView->expandToDepth(1);
-                                qDebug() << "STEPModelTreeWidget: UI更新完成";
+                                // 暂时禁用自动展开，避免崩溃
+                                // QCoreApplication::processEvents();
+                                // m_treeView->expandToDepth(1);
+                                // QCoreApplication::processEvents();
+                                qDebug() << "STEPModelTreeWidget: UI更新完成（跳过自动展开）";
                             } catch (const std::exception& e) {
                                 qCritical() << "STEPModelTreeWidget: UI更新异常:" << e.what();
                             } catch (...) {
@@ -307,7 +310,7 @@ void STEPModelTreeWidget::onWorkerModelTreeLoaded(bool success, const QString& m
                 qDebug() << "=== MAIN THREAD: STEP model tree loading completed successfully ===";
                 
                 // 延迟发送完成信号，确保所有UI更新完成
-                QTimer::singleShot(50, this, [this, message]() {
+                QTimer::singleShot(200, this, [this, message]() {
                     qDebug() << "STEPModelTreeWidget: 发送加载完成信号";
                     emit loadCompleted(true, message);
                 });

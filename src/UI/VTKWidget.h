@@ -166,6 +166,16 @@ private:
     void CreateActorsForSTEPNode(std::shared_ptr<STEPTreeNode> node);
     
     /**
+     * @brief 统计创建的Actor数量
+     */
+    int CountActors(std::shared_ptr<STEPTreeNode> node);
+    
+    /**
+     * @brief 输出没有创建Actor的节点信息
+     */
+    void PrintNodesWithoutActors(std::shared_ptr<STEPTreeNode> node, int depth = 0);
+    
+    /**
      * @brief 异步加载STEP文件
      */
     void LoadSTEPModelAsync(const QString& filePath, LoadQuality quality = LoadQuality::Balanced);
