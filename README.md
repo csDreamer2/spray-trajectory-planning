@@ -330,7 +330,7 @@ A: 这是正常现象，大型文件需要几分钟处理时间
    ```bash
    # Fork项目到你的GitHub账户
    # 然后克隆到本地
-   git clone https://github.com/你的用户名/spray-trajectory-planning.git
+   git clone https://github.com/csDreamer2/spray-trajectory-planning.git
    cd spray-trajectory-planning
    
    # 添加上游仓库
