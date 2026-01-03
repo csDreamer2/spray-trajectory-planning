@@ -39,7 +39,7 @@ message(STATUS "   构建目录: ${VTK_BUILD_DIR}")
 message(STATUS "   CMake目录: ${VTK_CMAKE_DIR}")
 
 # -----------------------------------------------------------------------------
-# 🔧 OpenCASCADE 配置 (版本 7.8)
+# 🔧 OpenCASCADE 配置 (版本 7.7)
 # -----------------------------------------------------------------------------
 # OpenCASCADE 安装目录
 set(OPENCASCADE_INSTALL_DIR "${TOOLS_BASE_DIR}/OpenCasCade/install" CACHE PATH "OpenCASCADE安装目录")
