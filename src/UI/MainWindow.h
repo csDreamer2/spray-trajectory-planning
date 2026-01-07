@@ -57,6 +57,7 @@ private slots:
     void OnSaveProject();
     void OnImportWorkpiece();
     void OnImportSTEPModel();  // 新增：导入STEP模型
+    void OnImportSTEPModelFast();  // 新增：快速导入STEP模型（使用缓存）
     void OnExportTrajectory();
     void OnStartSimulation();
     void OnStopSimulation();

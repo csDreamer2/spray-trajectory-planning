@@ -127,6 +127,12 @@ void MainWindow::setupMenuBar()
     connect(importSTEPAction, &QAction::triggered, this, &MainWindow::OnImportSTEPModel);
     fileMenu->addAction(importSTEPAction);
     
+    QAction* importSTEPFastAction = new QAction("快速导入STEP模型(&Q)", this);
+    importSTEPFastAction->setShortcut(QKeySequence("Ctrl+Q"));
+    importSTEPFastAction->setToolTip("使用缓存快速加载STEP模型（适合大型模型）");
+    connect(importSTEPFastAction, &QAction::triggered, this, &MainWindow::OnImportSTEPModelFast);
+    fileMenu->addAction(importSTEPFastAction);
+    
     QAction* importModelAction = new QAction("导入车间模型(&M)", this);
     connect(importModelAction, &QAction::triggered, this, [this]() {
         QString fileName = QFileDialog::getOpenFileName(this, "选择车间模型", "data/model",
@@ -784,6 +790,87 @@ void MainWindow::OnImportSTEPModel()
                 m_statusLabel->setText("STEP模型加载失败");
                 if (m_statusPanel) {
                     m_statusPanel->addLogMessage("ERROR", "STEP模型加载失败");
+                }
+                QMessageBox::critical(this, "加载失败", "无法加载STEP文件，请检查文件格式");
+            }
+        } else {
+            qWarning() << "MainWindow: 缺少必要组件 - modelTreePanel:" << (m_modelTreePanel ? "有效" : "空") 
+                      << "vtkView:" << (m_vtkView ? "有效" : "空");
+            QMessageBox::critical(this, "错误", "缺少必要组件，无法加载STEP模型");
+        }
+    }
+}
+
+void MainWindow::OnImportSTEPModelFast()
+{
+    QString fileName = QFileDialog::getOpenFileName(this, "选择STEP模型文件（快速加载）",
+        "data/model", "STEP文件 (*.step *.stp);;所有文件 (*.*)");
+    
+    if (!fileName.isEmpty()) {
+        QFileInfo fileInfo(fileName);
+        if (!fileInfo.exists()) {
+            QMessageBox::warning(this, "文件错误", QString("文件不存在:\n%1").arg(fileName));
+            return;
+        }
+        
+        qDebug() << "MainWindow: 开始快速加载STEP模型:" << fileName;
+        
+        if (m_statusPanel) {
+            m_statusPanel->addLogMessage("INFO", QString("开始快速加载STEP文件: %1").arg(fileInfo.fileName()));
+            m_statusPanel->addLogMessage("INFO", "使用缓存机制加速加载（首次加载会创建缓存）");
+        }
+        
+        // 显示STEP模型树面板
+        if (m_modelTreeDock) {
+            m_modelTreeDock->show();
+            m_modelTreeDock->raise();
+        }
+        
+        // 快速加载STEP文件（使用缓存）
+        if (m_modelTreePanel && m_vtkView) {
+            m_statusLabel->setText("正在快速加载STEP模型...");
+            QApplication::processEvents();
+            
+            // 快速加载STEP文件
+            bool success = m_modelTreePanel->loadSTEPFileFast(fileName);
+            
+            if (success) {
+                qDebug() << "MainWindow: STEP模型快速加载成功";
+                
+                // 将所有Actor添加到VTK渲染器
+                m_modelTreePanel->addActorsToRenderer(m_vtkView->getRenderer());
+                qDebug() << "MainWindow: Actor已添加到VTK渲染器";
+                
+                // 连接可见性变化信号
+                connect(m_modelTreePanel, &STEPModelTreeWidget::partVisibilityChanged,
+                        this, [this](const QString& partName, bool visible) {
+                            qDebug() << "MainWindow: 部件可见性变化:" << partName << visible;
+                            
+                            // 刷新VTK渲染
+                            if (m_vtkView) {
+                                m_vtkView->RefreshRender();
+                            }
+                            
+                            if (m_statusPanel) {
+                                m_statusPanel->addLogMessage("INFO", 
+                                    QString("组件 %1: %2").arg(partName).arg(visible ? "显示" : "隐藏"));
+                            }
+                        });
+                
+                // 重置相机以显示完整模型
+                m_vtkView->ResetCamera();
+                qDebug() << "MainWindow: 相机已重置";
+                
+                m_statusLabel->setText("STEP模型快速加载成功");
+                if (m_statusPanel) {
+                    m_statusPanel->addLogMessage("SUCCESS", "STEP模型快速加载完成");
+                    m_statusPanel->addLogMessage("INFO", "缓存已保存，下次加载将更快");
+                }
+                
+            } else {
+                m_statusLabel->setText("STEP模型快速加载失败");
+                if (m_statusPanel) {
+                    m_statusPanel->addLogMessage("ERROR", "STEP模型快速加载失败");
                 }
                 QMessageBox::critical(this, "加载失败", "无法加载STEP文件，请检查文件格式");
             }

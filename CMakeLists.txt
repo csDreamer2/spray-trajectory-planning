@@ -44,6 +44,7 @@ find_package(VTK REQUIRED COMPONENTS
     GUISupportQt
     IOGeometry
     IOPLY
+    IOXML
     FiltersCore
     FiltersGeometry
     RenderingAnnotation

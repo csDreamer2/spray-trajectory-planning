@@ -1,13 +1,27 @@
 #include "STEPModelTreeWidget.h"
 
 #include <QApplication>
+#include <QCoreApplication>
 #include <QHeaderView>
 #include <QMessageBox>
 #include <QDebug>
 #include <QFileInfo>
+#include <QDir>
+#include <QCryptographicHash>
+#include <QDateTime>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QFile>
+#include <QRegularExpression>
 
 // VTK includes (需要完整定义)
 #include <vtkRenderer.h>
+
+// VTK XML读写
+#include <vtkXMLPolyDataWriter.h>
+#include <vtkXMLPolyDataReader.h>
+#include <vtkAppendPolyData.h>
 
 // OpenCASCADE STEP读取
 #include <STEPCAFControl_Reader.hxx>
@@ -405,4 +419,410 @@ void STEPModelTreeWidget::removeActorsFromRenderer(vtkRenderer* renderer)
     }
     
     qDebug() << "STEPModelTreeWidget: 从渲染器移除了" << m_actorMap.size() << "个Actor";
+}
+
+// ==================== 缓存功能实现 ====================
+
+QString STEPModelTreeWidget::getCachePath(const QString& stepFilePath)
+{
+    QFileInfo fileInfo(stepFilePath);
+    QString baseName = fileInfo.completeBaseName();
+    
+    // 使用文件修改时间生成hash，确保文件更新后缓存失效
+    QDateTime modTime = fileInfo.lastModified();
+    QString timeStr = modTime.toString(Qt::ISODate);
+    QByteArray hash = QCryptographicHash::hash(timeStr.toUtf8(), QCryptographicHash::Md5);
+    QString hashStr = hash.toHex().left(8);
+    
+    // 获取项目根目录（向上3级：Debug -> bin -> build -> 项目根）
+    QDir appDir(QCoreApplication::applicationDirPath());
+    appDir.cdUp();  // bin
+    appDir.cdUp();  // build
+    appDir.cdUp();  // 项目根
+    
+    QString projectRoot = appDir.absolutePath();
+    QString cacheDir = projectRoot + "/data/cache";
+    
+    // 确保缓存目录存在
+    QDir dir;
+    if (!dir.exists(cacheDir)) {
+        dir.mkpath(cacheDir);
+        qDebug() << "STEPModelTreeWidget: 创建缓存目录:" << cacheDir;
+    }
+    
+    QString cachePath = QString("%1/%2_%3.vtp").arg(cacheDir, baseName, hashStr);
+    qDebug() << "STEPModelTreeWidget: 缓存路径:" << cachePath;
+    
+    return cachePath;
+}
+
+bool STEPModelTreeWidget::isCacheValid(const QString& cachePath, const QString& stepFilePath)
+{
+    // 检查JSON文件是否存在（树结构）
+    QString jsonPath = cachePath;
+    jsonPath.replace(".vtp", ".json");
+    QFileInfo jsonInfo(jsonPath);
+    
+    if (!jsonInfo.exists()) {
+        qDebug() << "STEPModelTreeWidget: JSON缓存文件不存在:" << jsonPath;
+        return false;
+    }
+    
+    // 检查缓存是否比STEP文件新
+    QFileInfo stepInfo(stepFilePath);
+    if (jsonInfo.lastModified() < stepInfo.lastModified()) {
+        qDebug() << "STEPModelTreeWidget: 缓存过期（STEP文件更新）";
+        return false;
+    }
+    
+    qDebug() << "STEPModelTreeWidget: 缓存有效";
+    return true;
+}
+
+bool STEPModelTreeWidget::saveToCache(const QString& cachePath)
+{
+    try {
+        qDebug() << "STEPModelTreeWidget: 开始保存缓存到:" << cachePath;
+        m_statusLabel->setText("正在保存缓存...");
+        QApplication::processEvents();
+        
+        if (m_actorMap.isEmpty()) {
+            qWarning() << "STEPModelTreeWidget: 没有可保存的数据";
+            return false;
+        }
+        
+        // 1. 保存树结构到JSON文件
+        QString jsonPath = cachePath;
+        jsonPath.replace(".vtp", ".json");
+        if (!saveTreeStructure(jsonPath)) {
+            qWarning() << "STEPModelTreeWidget: 树结构保存失败";
+            // 继续保存VTP，即使JSON失败
+        }
+        
+        // 2. 为每个部件保存独立的VTP文件
+        QString cacheDir = QFileInfo(cachePath).absolutePath();
+        QString baseName = QFileInfo(cachePath).completeBaseName();
+        
+        int savedCount = 0;
+        for (auto it = m_actorMap.begin(); it != m_actorMap.end(); ++it) {
+            QString partName = it.key();
+            vtkActor* actor = it.value();
+            
+            vtkPolyDataMapper* mapper = vtkPolyDataMapper::SafeDownCast(actor->GetMapper());
+            if (!mapper || !mapper->GetInput()) {
+                continue;
+            }
+            
+            // 为每个部件创建独立的VTP文件
+            // 使用安全的文件名（移除特殊字符）
+            QString safePartName = partName;
+            safePartName.replace(QRegularExpression("[^a-zA-Z0-9_-]"), "_");
+            QString partCachePath = QString("%1/%2_%3.vtp").arg(cacheDir, baseName, safePartName);
+            
+            vtkSmartPointer<vtkXMLPolyDataWriter> writer = 
+                vtkSmartPointer<vtkXMLPolyDataWriter>::New();
+            writer->SetFileName(partCachePath.toStdString().c_str());
+            writer->SetInputData(mapper->GetInput());
+            writer->SetDataModeToBinary();
+            writer->SetCompressorTypeToNone();
+            
+            if (writer->Write()) {
+                savedCount++;
+            } else {
+                qWarning() << "STEPModelTreeWidget: 部件保存失败:" << partName;
+            }
+            
+            // 定期更新UI
+            if (savedCount % 10 == 0) {
+                m_statusLabel->setText(QString("正在保存缓存... (%1/%2)").arg(savedCount).arg(m_actorMap.size()));
+                QApplication::processEvents();
+            }
+        }
+        
+        if (savedCount == 0) {
+            qCritical() << "STEPModelTreeWidget: 没有部件保存成功";
+            return false;
+        }
+        
+        qDebug() << "STEPModelTreeWidget: 缓存保存成功，保存了" << savedCount << "个部件";
+        m_statusLabel->setText(QString("缓存保存成功 (%1个部件)").arg(savedCount));
+        
+        return true;
+        
+    } catch (const std::exception& e) {
+        qCritical() << "STEPModelTreeWidget: 保存缓存失败:" << e.what();
+        m_statusLabel->setText("缓存保存失败");
+        return false;
+    } catch (...) {
+        qCritical() << "STEPModelTreeWidget: 保存缓存失败（未知异常）";
+        m_statusLabel->setText("缓存保存失败");
+        return false;
+    }
+}
+
+bool STEPModelTreeWidget::loadFromCache(const QString& cachePath)
+{
+    try {
+        qDebug() << "STEPModelTreeWidget: 从缓存加载:" << cachePath;
+        m_statusLabel->setText("正在从缓存加载...");
+        QApplication::processEvents();
+        
+        // 1. 加载树结构
+        QString jsonPath = cachePath;
+        jsonPath.replace(".vtp", ".json");
+        qDebug() << "STEPModelTreeWidget: JSON路径:" << jsonPath;
+        bool treeLoaded = loadTreeStructure(jsonPath);
+        
+        if (!treeLoaded) {
+            qWarning() << "STEPModelTreeWidget: 树结构加载失败";
+            return false;
+        }
+        
+        qDebug() << "STEPModelTreeWidget: 树结构加载成功";
+        
+        // 2. 为每个部件加载独立的VTP文件
+        QString cacheDir = QFileInfo(cachePath).absolutePath();
+        QString baseName = QFileInfo(cachePath).completeBaseName();
+        
+        qDebug() << "STEPModelTreeWidget: 缓存目录:" << cacheDir;
+        qDebug() << "STEPModelTreeWidget: 基础名称:" << baseName;
+        
+        int loadedCount = 0;
+        int totalParts = 0;
+        
+        // 遍历树，找到所有叶子节点
+        QTreeWidgetItemIterator it(m_treeWidget);
+        while (*it) {
+            QTreeWidgetItem* item = *it;
+            QString partName = item->data(0, Qt::UserRole).toString();
+            
+            // 只处理叶子节点（没有子节点的节点）
+            if (!partName.isEmpty() && item->childCount() == 0) {
+                totalParts++;
+                
+                // 构建部件缓存文件路径
+                QString safePartName = partName;
+                safePartName.replace(QRegularExpression("[^a-zA-Z0-9_-]"), "_");
+                QString partCachePath = QString("%1/%2_%3.vtp").arg(cacheDir, baseName, safePartName);
+                
+                qDebug() << "STEPModelTreeWidget: 尝试加载部件:" << partName << "-> 文件:" << partCachePath;
+                
+                QFileInfo partFileInfo(partCachePath);
+                if (!partFileInfo.exists()) {
+                    qWarning() << "STEPModelTreeWidget: 部件缓存文件不存在:" << partCachePath;
+                    ++it;
+                    continue;
+                }
+                
+                // 读取部件VTP文件
+                vtkSmartPointer<vtkXMLPolyDataReader> reader = 
+                    vtkSmartPointer<vtkXMLPolyDataReader>::New();
+                reader->SetFileName(partCachePath.toStdString().c_str());
+                reader->Update();
+                
+                vtkPolyData* polyData = reader->GetOutput();
+                if (!polyData || polyData->GetNumberOfPoints() == 0) {
+                    qWarning() << "STEPModelTreeWidget: 部件缓存文件无效:" << partName;
+                    ++it;
+                    continue;
+                }
+                
+                // 创建独立的Actor
+                vtkSmartPointer<vtkPolyDataMapper> mapper = 
+                    vtkSmartPointer<vtkPolyDataMapper>::New();
+                mapper->SetInputData(polyData);
+                
+                vtkSmartPointer<vtkActor> actor = vtkSmartPointer<vtkActor>::New();
+                actor->SetMapper(mapper);
+                actor->GetProperty()->SetColor(0.8, 0.8, 0.9);
+                actor->GetProperty()->SetSpecular(0.3);
+                actor->GetProperty()->SetSpecularPower(20);
+                
+                // 保存到Actor映射
+                m_actorMap[partName] = actor;
+                loadedCount++;
+                
+                // 定期更新UI
+                if (loadedCount % 10 == 0) {
+                    m_statusLabel->setText(QString("正在加载缓存... (%1/%2)").arg(loadedCount).arg(totalParts));
+                    QApplication::processEvents();
+                }
+            }
+            
+            ++it;
+        }
+        
+        if (loadedCount == 0) {
+            qWarning() << "STEPModelTreeWidget: 没有加载到任何部件";
+            return false;
+        }
+        
+        qDebug() << "STEPModelTreeWidget: 从缓存加载成功，加载了" << loadedCount << "个部件";
+        m_statusLabel->setText(QString("从缓存加载成功 (%1个部件)").arg(loadedCount));
+        
+        // 展开第一层
+        m_treeWidget->expandToDepth(1);
+        
+        return true;
+        
+    } catch (const std::exception& e) {
+        qCritical() << "STEPModelTreeWidget: 从缓存加载失败:" << e.what();
+        return false;
+    } catch (...) {
+        qCritical() << "STEPModelTreeWidget: 从缓存加载失败（未知异常）";
+        return false;
+    }
+}
+
+bool STEPModelTreeWidget::loadSTEPFileFast(const QString& filePath)
+{
+    QFileInfo fileInfo(filePath);
+    if (!fileInfo.exists()) {
+        QMessageBox::critical(this, "错误", "STEP文件不存在");
+        return false;
+    }
+    
+    clearScene();
+    
+    // 获取缓存路径
+    QString cachePath = getCachePath(filePath);
+    
+    // 检查缓存是否有效
+    if (isCacheValid(cachePath, filePath)) {
+        qDebug() << "STEPModelTreeWidget: 使用缓存快速加载";
+        
+        if (loadFromCache(cachePath)) {
+            emit loadCompleted(true, "从缓存快速加载成功");
+            return true;
+        } else {
+            qWarning() << "STEPModelTreeWidget: 缓存加载失败，回退到正常加载";
+        }
+    } else {
+        qDebug() << "STEPModelTreeWidget: 缓存不存在或已过期，执行正常加载";
+    }
+    
+    // 缓存无效或加载失败，执行正常STEP加载
+    bool success = loadSTEPFile(filePath);
+    
+    // 如果加载成功，保存缓存
+    if (success) {
+        qDebug() << "STEPModelTreeWidget: 正常加载成功，保存缓存";
+        saveToCache(cachePath);
+    }
+    
+    return success;
+}
+
+// ==================== 树结构保存/加载 ====================
+
+QJsonObject STEPModelTreeWidget::treeItemToJson(QTreeWidgetItem* item)
+{
+    if (!item) return QJsonObject();
+    
+    QJsonObject obj;
+    obj["name"] = item->text(0);
+    obj["checked"] = (item->checkState(1) == Qt::Checked);
+    obj["partName"] = item->data(0, Qt::UserRole).toString();
+    
+    // 递归保存子节点
+    if (item->childCount() > 0) {
+        QJsonArray children;
+        for (int i = 0; i < item->childCount(); ++i) {
+            children.append(treeItemToJson(item->child(i)));
+        }
+        obj["children"] = children;
+    }
+    
+    return obj;
+}
+
+QTreeWidgetItem* STEPModelTreeWidget::jsonToTreeItem(const QJsonObject& json, QTreeWidgetItem* parent)
+{
+    QTreeWidgetItem* item = parent ? 
+        new QTreeWidgetItem(parent) : new QTreeWidgetItem(m_treeWidget);
+    
+    item->setText(0, json["name"].toString());
+    item->setCheckState(1, json["checked"].toBool() ? Qt::Checked : Qt::Unchecked);
+    item->setData(0, Qt::UserRole, json["partName"].toString());
+    
+    // 递归加载子节点
+    if (json.contains("children")) {
+        QJsonArray children = json["children"].toArray();
+        for (const QJsonValue& childValue : children) {
+            jsonToTreeItem(childValue.toObject(), item);
+        }
+    }
+    
+    return item;
+}
+
+bool STEPModelTreeWidget::saveTreeStructure(const QString& jsonPath)
+{
+    try {
+        QJsonArray rootArray;
+        
+        // 保存所有顶层节点
+        for (int i = 0; i < m_treeWidget->topLevelItemCount(); ++i) {
+            QTreeWidgetItem* item = m_treeWidget->topLevelItem(i);
+            rootArray.append(treeItemToJson(item));
+        }
+        
+        QJsonObject root;
+        root["version"] = "1.0";
+        root["shapeCounter"] = m_shapeCounter;
+        root["tree"] = rootArray;
+        
+        // 写入JSON文件
+        QFile file(jsonPath);
+        if (!file.open(QIODevice::WriteOnly)) {
+            qCritical() << "STEPModelTreeWidget: 无法创建JSON文件:" << jsonPath;
+            return false;
+        }
+        
+        QJsonDocument doc(root);
+        file.write(doc.toJson(QJsonDocument::Compact));
+        file.close();
+        
+        qDebug() << "STEPModelTreeWidget: 树结构已保存到:" << jsonPath;
+        return true;
+        
+    } catch (const std::exception& e) {
+        qCritical() << "STEPModelTreeWidget: 保存树结构失败:" << e.what();
+        return false;
+    }
+}
+
+bool STEPModelTreeWidget::loadTreeStructure(const QString& jsonPath)
+{
+    try {
+        QFile file(jsonPath);
+        if (!file.open(QIODevice::ReadOnly)) {
+            qWarning() << "STEPModelTreeWidget: 无法打开JSON文件:" << jsonPath;
+            return false;
+        }
+        
+        QByteArray data = file.readAll();
+        file.close();
+        
+        QJsonDocument doc = QJsonDocument::fromJson(data);
+        if (doc.isNull() || !doc.isObject()) {
+            qWarning() << "STEPModelTreeWidget: JSON格式无效";
+            return false;
+        }
+        
+        QJsonObject root = doc.object();
+        m_shapeCounter = root["shapeCounter"].toInt();
+        
+        QJsonArray rootArray = root["tree"].toArray();
+        for (const QJsonValue& value : rootArray) {
+            jsonToTreeItem(value.toObject(), nullptr);
+        }
+        
+        qDebug() << "STEPModelTreeWidget: 树结构已加载，共" << m_shapeCounter << "个节点";
+        return true;
+        
+    } catch (const std::exception& e) {
+        qCritical() << "STEPModelTreeWidget: 加载树结构失败:" << e.what();
+        return false;
+    }
 }

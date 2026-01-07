@@ -100,6 +100,8 @@ data/model/*
 !data/model/.gitkeep
 data/pointclouds/*
 !data/pointclouds/.gitkeep
+data/cache/*
+!data/cache/.gitkeep
 
 # 大型文件类型
 *.STEP
@@ -108,6 +110,8 @@ data/pointclouds/*
 *.ply
 *.pcd
 *.las
+*.vtp
+*.vtu
 
 # 其他大型测试数据
 data/large_models/

@@ -37,6 +37,13 @@ public:
      * @return 是否成功
      */
     bool loadSTEPFile(const QString& filePath);
+    
+    /**
+     * @brief 快速加载STEP文件（使用缓存）
+     * @param filePath 文件路径
+     * @return 是否成功
+     */
+    bool loadSTEPFileFast(const QString& filePath);
 
     /**
      * @brief 清空场景
@@ -96,6 +103,18 @@ private:
     
     // 辅助函数：递归高亮
     void highlightItemRecursive(QTreeWidgetItem* item);
+    
+    // 缓存相关
+    QString getCachePath(const QString& stepFilePath);
+    bool isCacheValid(const QString& cachePath, const QString& stepFilePath);
+    bool saveToCache(const QString& cachePath);
+    bool loadFromCache(const QString& cachePath);
+    
+    // 树结构保存/加载
+    bool saveTreeStructure(const QString& jsonPath);
+    bool loadTreeStructure(const QString& jsonPath);
+    QJsonObject treeItemToJson(QTreeWidgetItem* item);
+    QTreeWidgetItem* jsonToTreeItem(const QJsonObject& json, QTreeWidgetItem* parent = nullptr);
 
 private:
     QVBoxLayout* m_layout;

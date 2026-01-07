@@ -34,6 +34,8 @@ target_link_libraries(UI
     VTK::GUISupportQt
     VTK::InteractionStyle
     VTK::IOPLY
+    VTK::IOXML
+    VTK::FiltersCore
     Data  # 添加Data库链接
 )
 
