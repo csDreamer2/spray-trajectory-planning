@@ -885,14 +885,20 @@ void MainWindow::OnImportSTEPModelFast()
             m_statusLabel->setText("正在快速加载STEP模型...");
             QApplication::processEvents();
             
+            // 设置renderer，这样加载完成后会自动添加Actor
+            m_modelTreePanel->setRenderer(m_vtkView->getRenderer());
+            
             // 快速加载STEP文件
             bool success = m_modelTreePanel->loadSTEPFileFast(fileName);
             
             if (success) {
                 qDebug() << "MainWindow: STEP模型快速加载成功";
                 
-                // 将所有Actor添加到VTK渲染器
-                m_modelTreePanel->addActorsToRenderer(m_vtkView->getRenderer());
+                // 对于缓存加载，立即添加Actor
+                // 对于异步加载，会在onLoadFinished中自动添加
+                if (m_modelTreePanel->getTreeWidget()->topLevelItemCount() > 0) {
+                    m_modelTreePanel->addActorsToRenderer(m_vtkView->getRenderer());
+                }
                 qDebug() << "MainWindow: Actor已添加到VTK渲染器";
                 
                 // 连接可见性变化信号
@@ -1080,11 +1086,17 @@ void MainWindow::loadRobotModel(const QString& modelPath)
     
     // 使用快速加载方法（带缓存）
     if (m_modelTreePanel && m_vtkView) {
+        // 设置renderer，这样加载完成后会自动添加Actor
+        m_modelTreePanel->setRenderer(m_vtkView->getRenderer());
+        
         bool success = m_modelTreePanel->loadSTEPFileFast(robotModelPath);
         
         if (success) {
-            // 将Actor添加到VTK渲染器
-            m_modelTreePanel->addActorsToRenderer(m_vtkView->getRenderer());
+            // 对于缓存加载，立即添加Actor
+            // 对于异步加载，会在onLoadFinished中自动添加
+            if (m_modelTreePanel->getTreeWidget()->topLevelItemCount() > 0) {
+                m_modelTreePanel->addActorsToRenderer(m_vtkView->getRenderer());
+            }
             
     // 设置STEP模型树引用到VTKWidget（用于关节变换）
             m_vtkView->SetSTEPModelTreeWidget(m_modelTreePanel);

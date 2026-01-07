@@ -1,4 +1,5 @@
 #include "STEPModelTreeWidget.h"
+#include "STEPLoadWorker.h"
 
 #include <QApplication>
 #include <QCoreApplication>
@@ -14,6 +15,14 @@
 #include <QJsonArray>
 #include <QFile>
 #include <QRegularExpression>
+#include <QTimer>
+#include <QProgressDialog>
+
+// 注册自定义类型以便在信号中使用
+typedef QMap<QString, vtkSmartPointer<vtkActor>> ActorMap;
+typedef QMap<QString, TopoDS_Shape> ShapeMap;
+Q_DECLARE_METATYPE(ActorMap)
+Q_DECLARE_METATYPE(ShapeMap)
 
 // VTK includes (需要完整定义)
 #include <vtkRenderer.h>
@@ -59,7 +68,15 @@ STEPModelTreeWidget::STEPModelTreeWidget(QWidget* parent)
     , m_contextMenu(nullptr)
     , m_expandAction(nullptr)
     , m_collapseAction(nullptr)
+    , m_loadThread(nullptr)
+    , m_loadWorker(nullptr)
+    , m_progressDialog(nullptr)
+    , m_renderer(nullptr)
 {
+    // 注册自定义类型
+    qRegisterMetaType<QMap<QString, vtkSmartPointer<vtkActor>>>("QMap<QString, vtkSmartPointer<vtkActor>>");
+    qRegisterMetaType<QMap<QString, TopoDS_Shape>>("QMap<QString, TopoDS_Shape>");
+    
     setupUI();
     setupContextMenu();
 }
@@ -67,6 +84,22 @@ STEPModelTreeWidget::STEPModelTreeWidget(QWidget* parent)
 STEPModelTreeWidget::~STEPModelTreeWidget()
 {
     qDebug() << "STEPModelTreeWidget: 析构";
+    
+    // 清理进度对话框
+    if (m_progressDialog) {
+        m_progressDialog->close();
+        delete m_progressDialog;
+        m_progressDialog = nullptr;
+    }
+    
+    // 清理加载线程
+    if (m_loadThread) {
+        m_loadThread->quit();
+        m_loadThread->wait();
+        delete m_loadThread;
+        m_loadThread = nullptr;
+    }
+    
     clearScene();
 }
 
@@ -121,87 +154,52 @@ bool STEPModelTreeWidget::loadSTEPFile(const QString& filePath)
         return false;
     }
     
-    qDebug() << "STEPModelTreeWidget: 开始同步加载STEP文件:" << filePath;
-    m_statusLabel->setText("正在加载STEP文件...");
+    qDebug() << "STEPModelTreeWidget: 开始异步加载STEP文件:" << filePath;
+    
+    // 创建进度对话框
+    if (!m_progressDialog) {
+        m_progressDialog = new QProgressDialog(this);
+        m_progressDialog->setWindowTitle("加载STEP模型");
+        m_progressDialog->setWindowModality(Qt::WindowModal);
+        m_progressDialog->setRange(0, 100);
+        m_progressDialog->setAutoClose(true);
+        m_progressDialog->setAutoReset(true);
+        m_progressDialog->setCancelButton(nullptr);
+    }
+    
+    m_progressDialog->setLabelText("正在读取STEP文件...");
+    m_progressDialog->setValue(0);
+    m_progressDialog->show();
     QApplication::processEvents();
     
     clearScene();
     
-    try {
-        // 创建OCAF文档
-        Handle(XCAFApp_Application) app = XCAFApp_Application::GetApplication();
-        app->NewDocument("MDTV-XCAF", m_occDoc);
+    // 创建加载线程和Worker
+    if (!m_loadThread) {
+        m_loadThread = new QThread(this);
+        m_loadWorker = new STEPLoadWorker();
+        m_loadWorker->moveToThread(m_loadThread);
         
-        // 读取STEP文件
-        STEPCAFControl_Reader reader;
-        IFSelect_ReturnStatus status = reader.ReadFile(filePath.toStdString().c_str());
-        
-        if (status != IFSelect_RetDone) {
-            QMessageBox::critical(this, "错误", "无法读取STEP文件");
-            m_statusLabel->setText("加载失败");
-            return false;
-        }
-        
-        qDebug() << "STEPModelTreeWidget: STEP文件读取成功";
-        m_statusLabel->setText("正在解析STEP数据...");
-        QApplication::processEvents();
-        
-        if (!reader.Transfer(m_occDoc)) {
-            QMessageBox::critical(this, "错误", "无法转换STEP数据");
-            m_statusLabel->setText("加载失败");
-            return false;
-        }
-        
-        qDebug() << "STEPModelTreeWidget: STEP数据转换成功";
-        m_statusLabel->setText("正在构建模型树...");
-        QApplication::processEvents();
-        
-        // 获取形状工具
-        Handle(XCAFDoc_ShapeTool) shapeTool = 
-            XCAFDoc_DocumentTool::ShapeTool(m_occDoc->Main());
-        
-        // 遍历所有顶层形状
-        TDF_LabelSequence labels;
-        shapeTool->GetFreeShapes(labels);
-        
-        qDebug() << "STEPModelTreeWidget: 找到" << labels.Length() << "个顶层形状";
-        
-        for (Standard_Integer i = 1; i <= labels.Length(); i++) {
-            TDF_Label label = labels.Value(i);
-            TopoDS_Shape shape = shapeTool->GetShape(label);
-            
-            if (!shape.IsNull()) {
-                processShape(shape, label, nullptr);
-            }
-            
-            // 定期更新UI
-            if (i % 10 == 0) {
-                QApplication::processEvents();
-            }
-        }
-        
-        qDebug() << "STEPModelTreeWidget: 模型树构建完成";
-        m_statusLabel->setText(QString("STEP模型加载成功 (%1个部件)").arg(m_shapeCounter));
-        
-        // 展开第一层
-        m_treeWidget->expandToDepth(1);
-        
-        emit loadCompleted(true, "STEP模型加载成功");
-        return true;
-        
-    } catch (const std::exception& e) {
-        qCritical() << "STEPModelTreeWidget: 加载异常:" << e.what();
-        QMessageBox::critical(this, "错误", QString("加载异常: %1").arg(e.what()));
-        m_statusLabel->setText("加载失败");
-        emit loadCompleted(false, QString("加载异常: %1").arg(e.what()));
-        return false;
-    } catch (...) {
-        qCritical() << "STEPModelTreeWidget: 未知异常";
-        QMessageBox::critical(this, "错误", "未知异常");
-        m_statusLabel->setText("加载失败");
-        emit loadCompleted(false, "未知异常");
-        return false;
+        // 连接信号
+        connect(m_loadWorker, &STEPLoadWorker::progressUpdated,
+                this, &STEPModelTreeWidget::onLoadProgress,
+                Qt::QueuedConnection);
+        connect(m_loadWorker, &STEPLoadWorker::loadFinished,
+                this, &STEPModelTreeWidget::onLoadFinished,
+                Qt::QueuedConnection);
+        connect(m_loadThread, &QThread::finished,
+                m_loadWorker, &QObject::deleteLater);
     }
+    
+    // 启动加载
+    QMetaObject::invokeMethod(m_loadWorker, "loadSTEPFile", Qt::QueuedConnection,
+                             Q_ARG(QString, filePath));
+    
+    if (!m_loadThread->isRunning()) {
+        m_loadThread->start();
+    }
+    
+    return true;
 }
 
 void STEPModelTreeWidget::processShape(const TopoDS_Shape& shape, 
@@ -217,13 +215,6 @@ void STEPModelTreeWidget::processShape(const TopoDS_Shape& shape,
         shapeName = QString("Part_%1").arg(++m_shapeCounter);
     }
     
-    // 创建树节点
-    QTreeWidgetItem* item = parentItem ? 
-        new QTreeWidgetItem(parentItem) : new QTreeWidgetItem(m_treeWidget);
-    item->setText(0, shapeName);
-    item->setCheckState(1, Qt::Checked);
-    item->setData(0, Qt::UserRole, shapeName);
-    
     // 处理子形状
     Handle(XCAFDoc_ShapeTool) shapeTool = 
         XCAFDoc_DocumentTool::ShapeTool(m_occDoc->Main());
@@ -237,7 +228,7 @@ void STEPModelTreeWidget::processShape(const TopoDS_Shape& shape,
             TDF_Label compLabel = components.Value(i);
             TopoDS_Shape compShape = shapeTool->GetShape(compLabel);
             if (!compShape.IsNull()) {
-                processShape(compShape, compLabel, item);
+                processShape(compShape, compLabel, parentItem);
             }
         }
     } else {
@@ -250,7 +241,6 @@ void STEPModelTreeWidget::processShape(const TopoDS_Shape& shape,
             // NAUO8 默认不显示（机器人底座/安装板）
             if (shapeName == "NAUO8") {
                 actor->SetVisibility(false);
-                item->setCheckState(1, Qt::Unchecked);
                 qDebug() << "STEPModelTreeWidget: NAUO8 默认隐藏";
             }
             
@@ -261,7 +251,8 @@ void STEPModelTreeWidget::processShape(const TopoDS_Shape& shape,
 
 vtkSmartPointer<vtkActor> STEPModelTreeWidget::createActorFromShape(const TopoDS_Shape& shape)
 {
-    // 网格化形状
+    // 网格化形状 - 使用更粗糙的网格以加快速度
+    // 参数0.1是偏差值，值越大网格越粗糙，加载越快
     BRepMesh_IncrementalMesh mesh(shape, 0.1);
     
     vtkSmartPointer<vtkPoints> points = vtkSmartPointer<vtkPoints>::New();
@@ -444,6 +435,12 @@ void STEPModelTreeWidget::addActorsToRenderer(vtkRenderer* renderer)
     }
     
     qDebug() << "STEPModelTreeWidget: 添加了" << m_actorMap.size() << "个Actor到渲染器";
+}
+
+void STEPModelTreeWidget::setRenderer(vtkRenderer* renderer)
+{
+    m_renderer = renderer;
+    qDebug() << "STEPModelTreeWidget: 设置VTK渲染器";
 }
 
 void STEPModelTreeWidget::removeActorsFromRenderer(vtkRenderer* renderer)
@@ -791,6 +788,7 @@ bool STEPModelTreeWidget::loadSTEPFileFast(const QString& filePath)
         qDebug() << "STEPModelTreeWidget: 使用缓存快速加载";
         
         if (loadFromCache(cachePath)) {
+            m_statusLabel->setText("从缓存快速加载成功");
             emit loadCompleted(true, "从缓存快速加载成功");
             return true;
         } else {
@@ -800,16 +798,11 @@ bool STEPModelTreeWidget::loadSTEPFileFast(const QString& filePath)
         qDebug() << "STEPModelTreeWidget: 缓存不存在或已过期，执行正常加载";
     }
     
-    // 缓存无效或加载失败，执行正常STEP加载
-    bool success = loadSTEPFile(filePath);
+    // 缓存无效或加载失败，执行异步STEP加载
+    // 保存缓存路径供加载完成后使用
+    m_currentCachePath = cachePath;
     
-    // 如果加载成功，保存缓存
-    if (success) {
-        qDebug() << "STEPModelTreeWidget: 正常加载成功，保存缓存";
-        saveToCache(cachePath);
-    }
-    
-    return success;
+    return loadSTEPFile(filePath);
 }
 
 // ==================== 树结构保存/加载 ====================
@@ -923,5 +916,86 @@ bool STEPModelTreeWidget::loadTreeStructure(const QString& jsonPath)
     } catch (const std::exception& e) {
         qCritical() << "STEPModelTreeWidget: 加载树结构失败:" << e.what();
         return false;
+    }
+}
+
+
+// ==================== 进度更新槽函数 ====================
+
+void STEPModelTreeWidget::onLoadProgress(int current, int total, const QString& message)
+{
+    if (m_progressDialog) {
+        m_progressDialog->setMaximum(total);
+        m_progressDialog->setValue(current);
+        m_progressDialog->setLabelText(message);
+        QApplication::processEvents();
+    }
+}
+
+void STEPModelTreeWidget::onLoadFinished(bool success, const QString& message,
+                                         QMap<QString, vtkSmartPointer<vtkActor>> actors,
+                                         QMap<QString, TopoDS_Shape> shapes,
+                                         int shapeCounter, const QString& topLevelName)
+{
+    qDebug() << "STEPModelTreeWidget: onLoadFinished 被调用，success=" << success 
+             << "actors数量=" << actors.size() << "shapeCounter=" << shapeCounter
+             << "topLevelName=" << topLevelName;
+    
+    if (success) {
+        // 复制Actor和Shape映射
+        m_actorMap = actors;
+        m_shapeMap = shapes;
+        m_shapeCounter = shapeCounter;
+        
+        qDebug() << "STEPModelTreeWidget: 复制完成，m_actorMap大小=" << m_actorMap.size();
+        
+        // 构建树形视图
+        // 首先添加顶层模型作为根节点
+        QString rootName = topLevelName.isEmpty() ? "Model" : topLevelName;
+        QTreeWidgetItem* rootItem = new QTreeWidgetItem(m_treeWidget);
+        rootItem->setText(0, rootName);
+        rootItem->setCheckState(1, Qt::Checked);
+        rootItem->setData(0, Qt::UserRole, "Assembly");
+        
+        // 然后添加所有部件作为子节点
+        for (auto it = m_actorMap.begin(); it != m_actorMap.end(); ++it) {
+            QTreeWidgetItem* item = new QTreeWidgetItem(rootItem);
+            item->setText(0, it.key());
+            item->setCheckState(1, Qt::Checked);
+            item->setData(0, Qt::UserRole, it.key());
+            qDebug() << "STEPModelTreeWidget: 添加树节点:" << it.key();
+        }
+        
+        // 展开第一层
+        m_treeWidget->expandToDepth(1);
+        
+        m_statusLabel->setText(message);
+        m_progressDialog->setLabelText("加载完成！");
+        m_progressDialog->setValue(100);
+        QApplication::processEvents();
+        
+        // 自动添加Actor到渲染器（如果已设置）
+        if (m_renderer) {
+            addActorsToRenderer(m_renderer);
+            qDebug() << "STEPModelTreeWidget: 自动添加Actor到渲染器";
+        }
+        
+        // 如果有缓存路径，保存缓存
+        if (!m_currentCachePath.isEmpty()) {
+            qDebug() << "STEPModelTreeWidget: 加载成功，保存缓存到:" << m_currentCachePath;
+            saveToCache(m_currentCachePath);
+            m_currentCachePath.clear();
+        }
+        
+        emit loadCompleted(true, message);
+        
+        // 延迟关闭进度对话框
+        QTimer::singleShot(500, m_progressDialog, &QProgressDialog::close);
+    } else {
+        m_statusLabel->setText("加载失败");
+        m_progressDialog->close();
+        QMessageBox::critical(this, "错误", message);
+        m_currentCachePath.clear();
+        emit loadCompleted(false, message);
     }
 }

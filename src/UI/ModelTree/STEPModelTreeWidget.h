@@ -8,6 +8,8 @@
 #include <QLabel>
 #include <QMap>
 #include <QString>
+#include <QThread>
+#include <QProgressDialog>
 #include <memory>
 
 // VTK includes
@@ -19,10 +21,13 @@
 #include <TDocStd_Document.hxx>
 #include <TDF_Label.hxx>
 
+// 前向声明
+class STEPLoadWorker;
+
 /**
- * @brief STEP模型树控件（简化版，同步加载）
+ * @brief STEP模型树控件（简化版，支持异步加载）
  * 
- * 参考 123/StepViewerWidget 实现，使用同步加载方式
+ * 参考 123/StepViewerWidget 实现，使用异步加载方式避免UI卡顿
  */
 class STEPModelTreeWidget : public QWidget {
     Q_OBJECT
@@ -67,6 +72,12 @@ public:
     void addActorsToRenderer(vtkRenderer* renderer);
     
     /**
+     * @brief 设置VTK渲染器（用于异步加载完成后添加Actor）
+     * @param renderer VTK渲染器
+     */
+    void setRenderer(vtkRenderer* renderer);
+    
+    /**
      * @brief 从VTK渲染器移除所有Actor
      * @param renderer VTK渲染器
      */
@@ -106,11 +117,24 @@ signals:
      * @param visible 是否可见
      */
     void partVisibilityChanged(const QString& partName, bool visible);
+    
+    /**
+     * @brief 进度更新信号
+     * @param current 当前进度
+     * @param total 总进度
+     * @param message 消息
+     */
+    void progressUpdated(int current, int total, const QString& message);
 
 private slots:
     void onItemClicked(QTreeWidgetItem* item, int column);
     void onItemChanged(QTreeWidgetItem* item, int column);
     void onContextMenuRequested(const QPoint& pos);
+    void onLoadProgress(int current, int total, const QString& message);
+    void onLoadFinished(bool success, const QString& message,
+                        QMap<QString, vtkSmartPointer<vtkActor>> actors,
+                        QMap<QString, TopoDS_Shape> shapes,
+                        int shapeCounter, const QString& topLevelName);
 
 private:
     void setupUI();
@@ -156,4 +180,11 @@ private:
     QMenu* m_contextMenu;
     QAction* m_expandAction;
     QAction* m_collapseAction;
+    
+    // 异步加载相关
+    QThread* m_loadThread;
+    STEPLoadWorker* m_loadWorker;
+    QProgressDialog* m_progressDialog;
+    QString m_currentCachePath;  // 当前加载的缓存路径
+    vtkRenderer* m_renderer;  // VTK渲染器引用
 };
