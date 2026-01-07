@@ -71,6 +71,26 @@ public:
      * @param renderer VTK渲染器
      */
     void removeActorsFromRenderer(vtkRenderer* renderer);
+    
+    /**
+     * @brief 应用变换到所有Actor
+     * @param transform VTK变换
+     */
+    void applyTransformToAllActors(vtkTransform* transform);
+    
+    /**
+     * @brief 应用变换到指定的Actor
+     * @param partName 部件名称
+     * @param transform VTK变换
+     */
+    void applyTransformToActor(const QString& partName, vtkTransform* transform);
+    
+    /**
+     * @brief 设置部件的可见性
+     * @param partName 部件名称
+     * @param visible 是否可见
+     */
+    void setPartVisibility(const QString& partName, bool visible);
 
 signals:
     /**
@@ -89,6 +109,7 @@ signals:
 
 private slots:
     void onItemClicked(QTreeWidgetItem* item, int column);
+    void onItemChanged(QTreeWidgetItem* item, int column);
     void onContextMenuRequested(const QPoint& pos);
 
 private:

@@ -6,8 +6,11 @@
 #include "PointCloudLoader.h"
 #include "ModelTreeDockWidget.h"
 #include "STEPModelTreeWidget.h"
+#include "WorkpieceManagerPanel.h"
 #include "../Data/PointCloudParser.h"
 #include "../Data/STEPModelTree.h"
+#include "../Robot/RobotController.h"
+#include "../Robot/RobotControlPanel.h"
 
 #include <QApplication>
 #include <QMenuBar>
@@ -58,6 +61,9 @@ MainWindow::MainWindow(QWidget *parent)
     , m_robotStatusLabel(nullptr)
     , m_simulationStatusLabel(nullptr)
     , m_pointCloudLoader(nullptr)
+    , m_robotController(nullptr)
+    , m_robotControlPanel(nullptr)
+    , m_robotControlDock(nullptr)
 {
     setWindowTitle("机器人喷涂轨迹规划系统 - 王睿 (浙江大学)");
     setMinimumSize(1400, 900);
@@ -96,6 +102,11 @@ MainWindow::MainWindow(QWidget *parent)
         m_statusPanel->addLogMessage("SUCCESS", "VTK 3D可视化引擎初始化完成");
         m_statusPanel->addLogMessage("INFO", "系统就绪，可以开始导入点云数据");
     }
+    
+    // 延迟加载机器人模型（等待VTK完全初始化）
+    QTimer::singleShot(500, this, [this]() {
+        loadRobotModel();
+    });
 }
 
 MainWindow::~MainWindow()
@@ -233,18 +244,7 @@ void MainWindow::setupDockWidgets()
 {
     // ========== 所有面板都放在右侧 ==========
     
-    // 1. 工件管理面板
-    m_workpieceDock = new QDockWidget("工件管理", this);
-    m_workpieceDock->setObjectName("workpieceDock");
-    m_workpieceDock->setAllowedAreas(Qt::AllDockWidgetAreas);
-    m_workpieceDock->setFeatures(QDockWidget::DockWidgetClosable | 
-                                  QDockWidget::DockWidgetMovable | 
-                                  QDockWidget::DockWidgetFloatable);
-    QWidget* workpieceWidget = createWorkpiecePanel();
-    m_workpieceDock->setWidget(workpieceWidget);
-    addDockWidget(Qt::RightDockWidgetArea, m_workpieceDock);
-    
-    // 2. 轨迹规划面板
+    // 1. 轨迹规划面板
     m_trajectoryDock = new QDockWidget("轨迹规划", this);
     m_trajectoryDock->setObjectName("trajectoryDock");
     m_trajectoryDock->setAllowedAreas(Qt::AllDockWidgetAreas);
@@ -255,7 +255,7 @@ void MainWindow::setupDockWidgets()
     m_trajectoryDock->setWidget(trajectoryWidget);
     addDockWidget(Qt::RightDockWidgetArea, m_trajectoryDock);
     
-    // 3. 参数设置面板
+    // 2. 参数设置面板
     m_parameterDock = new QDockWidget("参数设置", this);
     m_parameterDock->setObjectName("parameterDock");
     m_parameterDock->setAllowedAreas(Qt::AllDockWidgetAreas);
@@ -266,7 +266,7 @@ void MainWindow::setupDockWidgets()
     m_parameterDock->setWidget(parameterWidget);
     addDockWidget(Qt::RightDockWidgetArea, m_parameterDock);
     
-    // 4. 系统日志面板 - 默认显示
+    // 3. 系统日志面板 - 默认显示
     m_statusDock = new QDockWidget("系统日志", this);
     m_statusDock->setObjectName("statusDock");
     m_statusDock->setAllowedAreas(Qt::AllDockWidgetAreas);
@@ -277,7 +277,7 @@ void MainWindow::setupDockWidgets()
     m_statusDock->setWidget(m_statusPanel);
     addDockWidget(Qt::RightDockWidgetArea, m_statusDock);
     
-    // 5. STEP模型树面板
+    // 4. STEP模型树面板
     m_modelTreeDock = new QDockWidget("STEP模型树", this);
     m_modelTreeDock->setObjectName("modelTreeDock");
     m_modelTreeDock->setAllowedAreas(Qt::AllDockWidgetAreas);
@@ -293,7 +293,7 @@ void MainWindow::setupDockWidgets()
     // 保存引用以便后续使用
     m_modelTreePanel = modelTreeWidget;
     
-    // 6. 安全监控面板
+    // 5. 安全监控面板
     m_safetyDock = new QDockWidget("安全监控", this);
     m_safetyDock->setObjectName("safetyDock");
     m_safetyDock->setAllowedAreas(Qt::AllDockWidgetAreas);
@@ -304,22 +304,83 @@ void MainWindow::setupDockWidgets()
     m_safetyDock->setWidget(safetyWidget);
     addDockWidget(Qt::RightDockWidgetArea, m_safetyDock);
     
+    // 6. 工件库面板（新增）
+    m_workpieceManagerDock = new QDockWidget("工件库", this);
+    m_workpieceManagerDock->setObjectName("workpieceManagerDock");
+    m_workpieceManagerDock->setAllowedAreas(Qt::AllDockWidgetAreas);
+    m_workpieceManagerDock->setFeatures(QDockWidget::DockWidgetClosable | 
+                                         QDockWidget::DockWidgetMovable | 
+                                         QDockWidget::DockWidgetFloatable);
+    m_workpieceManager = new UI::WorkpieceManagerPanel(this);
+    m_workpieceManagerDock->setWidget(m_workpieceManager);
+    addDockWidget(Qt::RightDockWidgetArea, m_workpieceManagerDock);
+    
+    // 连接工件管理器信号
+    connect(m_workpieceManager, &UI::WorkpieceManagerPanel::workpieceDoubleClicked,
+            this, [this](const QString& filePath) {
+                // 直接加载点云文件
+                if (m_vtkView) {
+                    bool success = m_vtkView->LoadPointCloud(filePath);
+                    if (success) {
+                        m_statusPanel->addLogMessage("INFO", QString("工件加载成功: %1").arg(QFileInfo(filePath).fileName()));
+                    } else {
+                        m_statusPanel->addLogMessage("ERROR", QString("工件加载失败: %1").arg(QFileInfo(filePath).fileName()));
+                    }
+                }
+            });
+    connect(m_workpieceManager, &UI::WorkpieceManagerPanel::workpieceSelected,
+            this, [this](const QString& filePath) {
+                m_statusPanel->addLogMessage("INFO", QString("选中工件: %1").arg(QFileInfo(filePath).fileName()));
+            });
+    
+    // 7. 机器人控制面板
+    m_robotControlDock = new QDockWidget("机器人控制", this);
+    m_robotControlDock->setObjectName("robotControlDock");
+    m_robotControlDock->setAllowedAreas(Qt::AllDockWidgetAreas);
+    m_robotControlDock->setFeatures(QDockWidget::DockWidgetClosable | 
+                                     QDockWidget::DockWidgetMovable | 
+                                     QDockWidget::DockWidgetFloatable);
+    
+    // 创建机器人控制器和面板
+    m_robotController = new Robot::RobotController(this);
+    m_robotControlPanel = new Robot::RobotControlPanel(this);
+    m_robotControlPanel->setRobotController(m_robotController);
+    m_robotControlDock->setWidget(m_robotControlPanel);
+    addDockWidget(Qt::RightDockWidgetArea, m_robotControlDock);
+    
+    // 连接机器人控制面板信号到VTK视图（用于3D仿真）
+    connect(m_robotControlPanel, &Robot::RobotControlPanel::jointAnglesChanged,
+            this, [this](const std::array<double, 6>& angles) {
+                // 更新3D视图中的机器人模型
+                if (m_vtkView) {
+                    m_vtkView->UpdateRobotJoints(angles);
+                }
+                if (m_statusPanel) {
+                    m_statusPanel->addLogMessage("INFO", 
+                        QString("关节角度: J1=%1 J2=%2 J3=%3 J4=%4 J5=%5 J6=%6")
+                        .arg(angles[0], 0, 'f', 1).arg(angles[1], 0, 'f', 1).arg(angles[2], 0, 'f', 1)
+                        .arg(angles[3], 0, 'f', 1).arg(angles[4], 0, 'f', 1).arg(angles[5], 0, 'f', 1));
+                }
+            });
+    
     // 将面板堆叠为标签页，系统日志为默认
-    tabifyDockWidget(m_statusDock, m_workpieceDock);
-    tabifyDockWidget(m_workpieceDock, m_trajectoryDock);
+    tabifyDockWidget(m_statusDock, m_trajectoryDock);
     tabifyDockWidget(m_trajectoryDock, m_parameterDock);
     tabifyDockWidget(m_parameterDock, m_modelTreeDock);
     tabifyDockWidget(m_modelTreeDock, m_safetyDock);
+    tabifyDockWidget(m_safetyDock, m_workpieceManagerDock);
+    tabifyDockWidget(m_workpieceManagerDock, m_robotControlDock);
     m_statusDock->raise(); // 默认显示系统日志
     
     // ========== 添加面板到视图菜单 ==========
     if (m_panelMenu) {
-        m_panelMenu->addAction(m_workpieceDock->toggleViewAction());
         m_panelMenu->addAction(m_trajectoryDock->toggleViewAction());
         m_panelMenu->addAction(m_parameterDock->toggleViewAction());
         m_panelMenu->addAction(m_modelTreeDock->toggleViewAction());
         m_panelMenu->addAction(m_statusDock->toggleViewAction());
         m_panelMenu->addAction(m_safetyDock->toggleViewAction());
+        m_panelMenu->addAction(m_workpieceManagerDock->toggleViewAction());
+        m_panelMenu->addAction(m_robotControlDock->toggleViewAction());
     }
     
     // 设置面板大小限制
@@ -336,58 +397,16 @@ void MainWindow::setupDockWidgets()
 
 QWidget* MainWindow::createWorkpiecePanel()
 {
+    // 旧的工件管理面板已被工件库面板替代
+    // 保留此函数以避免编译错误，但返回空面板
     QWidget* panel = new QWidget(this);
     QVBoxLayout* layout = new QVBoxLayout(panel);
     layout->setContentsMargins(8, 8, 8, 8);
-    layout->setSpacing(8);
     
-    // 工件列表
-    QGroupBox* listGroup = new QGroupBox("已加载工件", panel);
-    QVBoxLayout* listLayout = new QVBoxLayout(listGroup);
-    listLayout->setContentsMargins(8, 8, 8, 8);
-    
-    m_workpieceList = new QListWidget(panel);
-    m_workpieceList->setMinimumHeight(80);
-    listLayout->addWidget(m_workpieceList);
-    
-    // 操作按钮 - 垂直布局（左右停靠时正常）
-    QVBoxLayout* btnLayout = new QVBoxLayout();
-    QPushButton* loadBtn = new QPushButton("导入工件", panel);
-    QPushButton* removeBtn = new QPushButton("移除选中", panel);
-    QPushButton* clearBtn = new QPushButton("清空列表", panel);
-    
-    // 设置按钮样式
-    QString btnStyle = "QPushButton { padding: 6px 12px; margin: 2px; font-size: 12px; }";
-    loadBtn->setStyleSheet(btnStyle);
-    removeBtn->setStyleSheet(btnStyle);
-    clearBtn->setStyleSheet(btnStyle);
-    
-    connect(loadBtn, &QPushButton::clicked, this, &MainWindow::OnImportWorkpiece);
-    connect(clearBtn, &QPushButton::clicked, this, [this]() {
-        m_workpieceList->clear();
-        m_statusLabel->setText("工件列表已清空");
-    });
-    
-    btnLayout->addWidget(loadBtn);
-    btnLayout->addWidget(removeBtn);
-    btnLayout->addWidget(clearBtn);
-    listLayout->addLayout(btnLayout);
-    
-    layout->addWidget(listGroup);
-    
-    // 工件信息
-    QGroupBox* infoGroup = new QGroupBox("工件信息", panel);
-    QVBoxLayout* infoLayout = new QVBoxLayout(infoGroup);
-    infoLayout->setContentsMargins(8, 8, 8, 8);
-    
-    m_workpieceInfo = new QLabel("未选择工件", panel);
-    m_workpieceInfo->setWordWrap(true);
-    m_workpieceInfo->setMinimumHeight(40);
-    m_workpieceInfo->setStyleSheet("QLabel { color: #666; padding: 6px; font-size: 12px; }");
-    infoLayout->addWidget(m_workpieceInfo);
-    
-    layout->addWidget(infoGroup);
-    layout->addStretch();
+    QLabel* label = new QLabel("此面板已废弃，请使用工件库面板", panel);
+    label->setAlignment(Qt::AlignCenter);
+    label->setStyleSheet("QLabel { color: #999; font-size: 12px; }");
+    layout->addWidget(label);
     
     return panel;
 }
@@ -553,7 +572,7 @@ QWidget* MainWindow::createSafetyPanel()
 void MainWindow::setupDockSizeConstraints()
 {
     // 完全移除尺寸限制，让面板内容自由显示
-    QList<QDockWidget*> docks = {m_workpieceDock, m_trajectoryDock, m_parameterDock, m_statusDock, m_safetyDock};
+    QList<QDockWidget*> docks = {m_trajectoryDock, m_parameterDock, m_statusDock, m_safetyDock, m_workpieceManagerDock};
     
     for (auto* dock : docks) {
         if (dock && dock->widget()) {
@@ -583,7 +602,7 @@ void MainWindow::restoreLayout()
 void MainWindow::resetLayout()
 {
     // 重置所有面板到右侧
-    QList<QDockWidget*> docks = {m_workpieceDock, m_trajectoryDock, m_parameterDock, m_statusDock, m_safetyDock};
+    QList<QDockWidget*> docks = {m_trajectoryDock, m_parameterDock, m_statusDock, m_safetyDock, m_workpieceManagerDock};
     
     for (auto* dock : docks) {
         if (dock) {
@@ -594,10 +613,10 @@ void MainWindow::resetLayout()
     }
     
     // 重新堆叠为标签页，系统日志为默认
-    tabifyDockWidget(m_statusDock, m_workpieceDock);
-    tabifyDockWidget(m_workpieceDock, m_trajectoryDock);
+    tabifyDockWidget(m_statusDock, m_trajectoryDock);
     tabifyDockWidget(m_trajectoryDock, m_parameterDock);
     tabifyDockWidget(m_parameterDock, m_safetyDock);
+    tabifyDockWidget(m_safetyDock, m_workpieceManagerDock);
     
     m_statusDock->raise(); // 显示系统日志
     
@@ -617,6 +636,8 @@ void MainWindow::connectSignals()
 
 void MainWindow::connectPanelSignals()
 {
+    // 旧的工件列表信号已移除，现在使用工件库面板
+    /*
     // 连接工件列表选择信号
     if (m_workpieceList) {
         connect(m_workpieceList, &QListWidget::currentItemChanged, this, 
@@ -626,6 +647,7 @@ void MainWindow::connectPanelSignals()
                 }
             });
     }
+    */
 }
 
 void MainWindow::connectVTKSignals()
@@ -638,10 +660,10 @@ void MainWindow::connectVTKSignals()
                     if (m_statusPanel) {
                         m_statusPanel->addLogMessage("SUCCESS", QString("%1模型加载完成").arg(modelType));
                     }
-                    // 添加到工件列表
-                    if (m_workpieceList && modelType == "PointCloud") {
-                        m_workpieceList->addItem("点云工件");
-                    }
+                    // 旧的工件列表已移除
+                    // if (m_workpieceList && modelType == "PointCloud") {
+                    //     m_workpieceList->addItem("点云工件");
+                    // }
                 } else {
                     m_statusLabel->setText(QString("VTK: %1 加载失败").arg(modelType));
                     if (m_statusPanel) {
@@ -707,10 +729,11 @@ void MainWindow::OnImportWorkpiece()
             if (m_statusPanel) {
                 m_statusPanel->addLogMessage("SUCCESS", "点云加载完成");
             }
-            if (m_workpieceList) {
-                QFileInfo fi(fileName);
-                m_workpieceList->addItem(fi.fileName());
-            }
+            // 旧的工件列表已移除
+            // if (m_workpieceList) {
+            //     QFileInfo fi(fileName);
+            //     m_workpieceList->addItem(fi.fileName());
+            // }
         } else {
             m_statusLabel->setText("点云加载失败");
             if (m_statusPanel) {
@@ -759,6 +782,9 @@ void MainWindow::OnImportSTEPModel()
                 m_modelTreePanel->addActorsToRenderer(m_vtkView->getRenderer());
                 qDebug() << "MainWindow: Actor已添加到VTK渲染器";
                 
+                // 设置STEP模型树引用到VTKWidget（用于关节变换）
+                m_vtkView->SetSTEPModelTreeWidget(m_modelTreePanel);
+                
                 // 连接可见性变化信号（移除UniqueConnection，因为lambda不支持）
                 // 注意：每次加载新文件时会创建新的连接，但这是可以接受的
                 connect(m_modelTreePanel, &STEPModelTreeWidget::partVisibilityChanged,
@@ -774,7 +800,7 @@ void MainWindow::OnImportSTEPModel()
                                 m_statusPanel->addLogMessage("INFO", 
                                     QString("组件 %1: %2").arg(partName).arg(visible ? "显示" : "隐藏"));
                             }
-                        });
+                        }, Qt::DirectConnection);
                 
                 // 重置相机以显示完整模型
                 m_vtkView->ResetCamera();
@@ -855,7 +881,7 @@ void MainWindow::OnImportSTEPModelFast()
                                 m_statusPanel->addLogMessage("INFO", 
                                     QString("组件 %1: %2").arg(partName).arg(visible ? "显示" : "隐藏"));
                             }
-                        });
+                        }, Qt::DirectConnection);
                 
                 // 重置相机以显示完整模型
                 m_vtkView->ResetCamera();
@@ -888,11 +914,11 @@ void MainWindow::LoadWorkpiece(const QString& filePath)
         bool success = m_vtkView->LoadPointCloud(filePath);
         if (success) {
             m_statusLabel->setText("工件加载成功");
-            // 添加到列表
-            if (m_workpieceList) {
-                QFileInfo fi(filePath);
-                m_workpieceList->addItem(fi.fileName());
-            }
+            // 旧的工件列表已移除
+            // if (m_workpieceList) {
+            //     QFileInfo fi(filePath);
+            //     m_workpieceList->addItem(fi.fileName());
+            // }
         } else {
             m_statusLabel->setText("工件加载失败");
             QMessageBox::warning(this, "加载失败", "点云文件加载失败，请检查文件格式。");
@@ -978,3 +1004,93 @@ void MainWindow::OnTrajectoryChanged() {}
 void MainWindow::OnPointCloudLoadProgress(int) {}
 void MainWindow::OnPointCloudLoadCanceled() {}
 void MainWindow::updateAllStatus() {}
+
+void MainWindow::loadRobotModel()
+{
+    // 从应用程序路径向上查找项目根目录
+    QString appDir = QApplication::applicationDirPath();
+    
+    // 尝试多种路径查找机器人模型（build/bin/Debug -> 项目根目录）
+    QStringList possiblePaths = {
+        appDir + "/../../../data/model/MPX3500.STEP",  // build/bin/Debug -> root
+        appDir + "/../../data/model/MPX3500.STEP",     // build/bin -> root
+        appDir + "/../data/model/MPX3500.STEP",        // build -> root
+        appDir + "/data/model/MPX3500.STEP",
+        "data/model/MPX3500.STEP",
+        "../data/model/MPX3500.STEP",
+        "../../data/model/MPX3500.STEP",
+        "../../../data/model/MPX3500.STEP"
+    };
+    
+    QString robotModelPath;
+    for (const QString& path : possiblePaths) {
+        QFileInfo fi(path);
+        if (fi.exists()) {
+            robotModelPath = fi.absoluteFilePath();
+            qDebug() << "MainWindow: 找到机器人模型:" << robotModelPath;
+            break;
+        }
+    }
+    
+    if (robotModelPath.isEmpty()) {
+        qDebug() << "MainWindow: 未找到机器人模型文件";
+        qDebug() << "MainWindow: 应用程序路径:" << appDir;
+        if (m_statusPanel) {
+            m_statusPanel->addLogMessage("WARNING", "未找到机器人模型文件，仿真模式将使用简化模型");
+        }
+        return;
+    }
+    
+    qDebug() << "MainWindow: 快速加载机器人模型:" << robotModelPath;
+    
+    if (m_statusPanel) {
+        m_statusPanel->addLogMessage("INFO", "正在快速加载机器人模型...");
+    }
+    
+    // 使用快速加载方法（带缓存）
+    if (m_modelTreePanel && m_vtkView) {
+        bool success = m_modelTreePanel->loadSTEPFileFast(robotModelPath);
+        
+        if (success) {
+            // 将Actor添加到VTK渲染器
+            m_modelTreePanel->addActorsToRenderer(m_vtkView->getRenderer());
+            
+    // 设置STEP模型树引用到VTKWidget（用于关节变换）
+            m_vtkView->SetSTEPModelTreeWidget(m_modelTreePanel);
+            
+            // 启用机器人显示/隐藏按钮
+            m_vtkView->enableRobotToggleButton(true);
+            
+            m_vtkView->ResetCamera();
+            
+            // 连接可见性变化信号
+            connect(m_modelTreePanel, &STEPModelTreeWidget::partVisibilityChanged,
+                    this, [this](const QString& partName, bool visible) {
+                        qDebug() << "MainWindow: 部件可见性变化:" << partName << visible;
+                        
+                        // 刷新VTK渲染
+                        if (m_vtkView) {
+                            m_vtkView->RefreshRender();
+                        }
+                        
+                        if (m_statusPanel) {
+                            m_statusPanel->addLogMessage("INFO", 
+                                QString("组件 %1: %2").arg(partName).arg(visible ? "显示" : "隐藏"));
+                        }
+                    }, Qt::DirectConnection);
+            
+            if (m_statusPanel) {
+                m_statusPanel->addLogMessage("SUCCESS", "机器人模型快速加载完成");
+            }
+            
+            // 显示模型树面板
+            if (m_modelTreeDock) {
+                m_modelTreeDock->show();
+            }
+        } else {
+            if (m_statusPanel) {
+                m_statusPanel->addLogMessage("WARNING", "机器人模型加载失败，仿真模式将使用简化模型");
+            }
+        }
+    }
+}

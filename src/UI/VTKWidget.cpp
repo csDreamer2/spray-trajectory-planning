@@ -1,5 +1,6 @@
 #include "VTKWidget.h"
 #include "StatusPanel.h"
+#include "STEPModelTreeWidget.h"
 #include "../Data/STEPModelTree.h"  // 添加STEP模型树头文件
 #include <QDebug>
 #include <QMessageBox>
@@ -11,6 +12,8 @@
 #include <QFile>
 #include <QElapsedTimer>
 #include <QMessageBox>
+#include <array>
+#include <cmath>
 
 // VTK includes
 #include <vtkGenericOpenGLRenderWindow.h>
@@ -88,6 +91,7 @@ VTKWidget::VTKWidget(QWidget *parent)
     , m_animationSteps(0)
     , m_currentAnimationStep(0)
     , m_statusPanel(nullptr)
+    , m_modelTreeWidget(nullptr)
 {
     setupUI();
     setupVTKPipeline();
@@ -593,6 +597,82 @@ void VTKWidget::updateRobotAnimation()
     }
 }
 
+void VTKWidget::UpdateRobotJoints(const std::array<double, 6>& jointAngles)
+{
+    // TODO: 实现完整的6轴机器人关节变换
+    // 当前使用简化的末端位姿变换作为演示
+    // 实际应用中需要根据机器人DH参数计算各关节的变换矩阵
+    
+    // 简化演示：将关节角度映射到末端位姿变换
+    // J1: 基座旋转 -> 绕Z轴旋转
+    // J2: 肩部 -> 影响Z高度
+    // J3: 肘部 -> 影响前伸距离
+    // J4-J6: 手腕 -> 末端姿态
+    
+    double baseRotation = jointAngles[0];  // J1 基座旋转
+    double shoulderAngle = jointAngles[1]; // J2 肩部
+    double elbowAngle = jointAngles[2];    // J3 肘部
+    double wristRoll = jointAngles[3];     // J4 手腕旋转
+    double wristPitch = jointAngles[4];    // J5 手腕俯仰
+    double wristYaw = jointAngles[5];      // J6 末端旋转
+    
+    // 简化的运动学计算（仅用于演示）
+    // 实际应用需要使用完整的DH参数计算
+    double armLength1 = 680.0;  // 大臂长度 mm
+    double armLength2 = 680.0;  // 小臂长度 mm
+    
+    // 计算末端位置（简化）
+    double rad = M_PI / 180.0;
+    double reach = armLength1 * cos(shoulderAngle * rad) + armLength2 * cos((shoulderAngle + elbowAngle) * rad);
+    double height = 330.0 + armLength1 * sin(shoulderAngle * rad) + armLength2 * sin((shoulderAngle + elbowAngle) * rad);
+    
+    double x = reach * cos(baseRotation * rad);
+    double y = reach * sin(baseRotation * rad);
+    double z = height;
+    
+    // 如果有专用机器人Actor，应用变换
+    if (m_robotActor) {
+        m_robotTransform->Identity();
+        m_robotTransform->Translate(x, y, z);
+        m_robotTransform->RotateZ(baseRotation);
+        m_robotTransform->RotateY(wristPitch);
+        m_robotTransform->RotateX(wristRoll);
+        m_robotTransform->RotateZ(wristYaw);
+        
+        m_robotActor->SetUserTransform(m_robotTransform);
+        m_renderWindow->Render();
+    }
+    // 如果有STEP模型树，应用变换到各个关节
+    else if (m_modelTreeWidget) {
+        // 对各个关节应用单独的变换
+        // NAUO1: 基座 - 绕Z轴旋转
+        vtkSmartPointer<vtkTransform> baseTransform = vtkSmartPointer<vtkTransform>::New();
+        baseTransform->Identity();
+        baseTransform->RotateZ(baseRotation);
+        m_modelTreeWidget->applyTransformToActor("NAUO1", baseTransform);
+        
+        // NAUO2-NAUO7: 其他关节 - 暂时不变换（需要完整的DH参数）
+        // 这里可以后续添加更复杂的关节变换
+        
+        qDebug() << "VTKWidget: 应用关节变换到STEP模型 -"
+                 << "J1(基座旋转):" << baseRotation << "°"
+                 << "J2(肩部):" << shoulderAngle << "°"
+                 << "J3(肘部):" << elbowAngle << "°";
+        
+        m_renderWindow->Render();
+    }
+    else {
+        // 仿真模式下，关节角度变化仍然有效，只是没有3D可视化
+        qDebug() << "VTKWidget: 关节角度更新 (无3D模型) -"
+                 << "J1:" << jointAngles[0]
+                 << "J2:" << jointAngles[1]
+                 << "J3:" << jointAngles[2]
+                 << "J4:" << jointAngles[3]
+                 << "J5:" << jointAngles[4]
+                 << "J6:" << jointAngles[5];
+    }
+}
+
 bool VTKWidget::LoadPointCloud(const QString& filePath)
 {
     QFileInfo fileInfo(filePath);
@@ -898,10 +978,21 @@ void VTKWidget::SetWorkpieceVisible(bool visible)
 
 void VTKWidget::SetRobotVisible(bool visible)
 {
+    // 如果有专用机器人Actor
     if (m_robotActor) {
         m_robotActor->SetVisibility(visible);
-        m_renderWindow->Render();
     }
+    
+    // 如果有STEP模型树中的机器人模型
+    if (m_modelTreeWidget) {
+        // 设置所有机器人部件的可见性
+        for (int i = 1; i <= 8; ++i) {
+            QString partName = QString("NAUO%1").arg(i);
+            m_modelTreeWidget->setPartVisibility(partName, visible);
+        }
+    }
+    
+    m_renderWindow->Render();
 }
 
 void VTKWidget::SetTrajectoryVisible(bool visible)

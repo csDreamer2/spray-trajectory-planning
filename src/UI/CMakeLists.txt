@@ -18,6 +18,9 @@ set(UI_SOURCES
     STEPModelTreeWidget.h
     ModelTreeDockWidget.cpp
     ModelTreeDockWidget.h
+    # 工件管理面板
+    WorkpieceManagerPanel.cpp
+    WorkpieceManagerPanel.h
 )
 
 add_library(UI STATIC ${UI_SOURCES})

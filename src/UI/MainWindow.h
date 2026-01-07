@@ -23,6 +23,11 @@ class QProgressDialog;
 class QMenu;
 QT_END_NAMESPACE
 
+namespace Robot {
+class RobotController;
+class RobotControlPanel;
+}
+
 namespace UI {
 
 class VTKWidget;
@@ -31,6 +36,7 @@ class StatusPanel;
 class SafetyPanel;
 class PointCloudLoader;
 class ModelTreeDockWidget;
+class WorkpieceManagerPanel;
 }
 
 class STEPModelTree;
@@ -72,6 +78,8 @@ private slots:
     
     void OnPointCloudLoadProgress(int progress);
     void OnPointCloudLoadCanceled();
+    
+    void loadRobotModel();  // 加载机器人模型
 
 private:
     void setupUI();
@@ -116,16 +124,20 @@ private:
     QMenu* m_panelMenu;
     
     // 停靠窗口
-    QDockWidget* m_workpieceDock;
     QDockWidget* m_trajectoryDock;
     QDockWidget* m_parameterDock;
     QDockWidget* m_statusDock;
     QDockWidget* m_safetyDock;
     QDockWidget* m_modelTreeDock;
+    QDockWidget* m_workpieceManagerDock;
     
-    // 工件面板组件
-    QListWidget* m_workpieceList;
-    QLabel* m_workpieceInfo;
+    // 工件管理器
+    UI::WorkpieceManagerPanel* m_workpieceManager;
+    
+    // 机器人控制
+    Robot::RobotController* m_robotController;
+    Robot::RobotControlPanel* m_robotControlPanel;
+    QDockWidget* m_robotControlDock;
     
     // 状态标签
     QLabel* m_statusLabel;

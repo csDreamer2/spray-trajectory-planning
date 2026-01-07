@@ -86,8 +86,12 @@ void STEPModelTreeWidget::setupUI()
     m_treeWidget->setSelectionMode(QAbstractItemView::SingleSelection);
     m_treeWidget->setContextMenuPolicy(Qt::CustomContextMenu);
     
+    // 点击项目名称时高亮
     connect(m_treeWidget, &QTreeWidget::itemClicked, 
             this, &STEPModelTreeWidget::onItemClicked);
+    // 勾选框状态变化时切换可见性
+    connect(m_treeWidget, &QTreeWidget::itemChanged,
+            this, &STEPModelTreeWidget::onItemChanged);
     connect(m_treeWidget, &QTreeWidget::customContextMenuRequested,
             this, &STEPModelTreeWidget::onContextMenuRequested);
     
@@ -240,6 +244,14 @@ void STEPModelTreeWidget::processShape(const TopoDS_Shape& shape,
         if (actor) {
             m_actorMap[shapeName] = actor;
             m_shapeMap[shapeName] = shape;
+            
+            // NAUO8 默认不显示（机器人底座/安装板）
+            if (shapeName == "NAUO8") {
+                actor->SetVisibility(false);
+                item->setCheckState(1, Qt::Unchecked);
+                qDebug() << "STEPModelTreeWidget: NAUO8 默认隐藏";
+            }
+            
             qDebug() << "STEPModelTreeWidget: 创建Actor成功:" << shapeName;
         }
     }
@@ -310,28 +322,53 @@ vtkSmartPointer<vtkActor> STEPModelTreeWidget::createActorFromShape(const TopoDS
 
 void STEPModelTreeWidget::onItemClicked(QTreeWidgetItem* item, int column)
 {
-    if (column == 1) {
-        // 切换可见性 - 递归处理子节点
-        bool visible = (item->checkState(1) == Qt::Checked);
-        setItemVisibilityRecursive(item, visible);
-        
-        // 立即刷新渲染
-        emit partVisibilityChanged(item->data(0, Qt::UserRole).toString(), visible);
-        
-    } else if (column == 0) {
-        // 高亮选中的部件
+    if (column == 0) {
+        // 点击部件名称时高亮选中的部件
         QString partName = item->data(0, Qt::UserRole).toString();
         
-        // 重置所有部件颜色
+        qDebug() << "STEPModelTreeWidget: 点击部件:" << partName;
+        
+        // 重置所有部件颜色（只修改属性，不刷新渲染）
         for (auto it = m_actorMap.begin(); it != m_actorMap.end(); ++it) {
             it.value()->GetProperty()->SetColor(0.8, 0.8, 0.9);
         }
         
-        // 高亮选中部件及其所有子部件（橙色，参考样例）
+        // 高亮选中部件及其所有子部件（橙色）
         highlightItemRecursive(item);
         
-        // 立即刷新渲染
+        // 发送信号刷新渲染（只发送一次，不在循环中）
         emit partVisibilityChanged(partName, true);
+    }
+}
+
+void STEPModelTreeWidget::onItemChanged(QTreeWidgetItem* item, int column)
+{
+    if (column == 1) {
+        // 勾选框状态变化 - 切换可见性
+        bool visible = (item->checkState(1) == Qt::Checked);
+        QString partName = item->data(0, Qt::UserRole).toString();
+        
+        qDebug() << "STEPModelTreeWidget: 可见性变化:" << partName << visible;
+        
+        // 设置当前节点的可见性
+        if (m_actorMap.contains(partName)) {
+            m_actorMap[partName]->SetVisibility(visible);
+        }
+        
+        // 阻止信号递归
+        m_treeWidget->blockSignals(true);
+        
+        // 递归设置子节点
+        for (int i = 0; i < item->childCount(); ++i) {
+            QTreeWidgetItem* child = item->child(i);
+            child->setCheckState(1, visible ? Qt::Checked : Qt::Unchecked);
+            setItemVisibilityRecursive(child, visible);
+        }
+        
+        m_treeWidget->blockSignals(false);
+        
+        // 发送信号刷新渲染
+        emit partVisibilityChanged(partName, visible);
     }
 }
 
@@ -419,6 +456,59 @@ void STEPModelTreeWidget::removeActorsFromRenderer(vtkRenderer* renderer)
     }
     
     qDebug() << "STEPModelTreeWidget: 从渲染器移除了" << m_actorMap.size() << "个Actor";
+}
+
+void STEPModelTreeWidget::applyTransformToAllActors(vtkTransform* transform)
+{
+    if (!transform) {
+        qWarning() << "STEPModelTreeWidget: transform为空";
+        return;
+    }
+    
+    // 应用变换到所有可见的Actor
+    for (auto it = m_actorMap.begin(); it != m_actorMap.end(); ++it) {
+        vtkActor* actor = it.value();
+        if (actor && actor->GetVisibility()) {
+            // 使用C风格强制转换
+            actor->SetUserTransform((vtkLinearTransform*)transform);
+        }
+    }
+    
+    qDebug() << "STEPModelTreeWidget: 应用变换到" << m_actorMap.size() << "个Actor";
+}
+
+void STEPModelTreeWidget::applyTransformToActor(const QString& partName, vtkTransform* transform)
+{
+    if (!transform) {
+        qWarning() << "STEPModelTreeWidget: transform为空";
+        return;
+    }
+    
+    if (!m_actorMap.contains(partName)) {
+        qWarning() << "STEPModelTreeWidget: 找不到部件:" << partName;
+        return;
+    }
+    
+    vtkActor* actor = m_actorMap[partName];
+    if (actor) {
+        // 使用C风格强制转换
+        actor->SetUserTransform((vtkLinearTransform*)transform);
+        qDebug() << "STEPModelTreeWidget: 应用变换到部件:" << partName;
+    }
+}
+
+void STEPModelTreeWidget::setPartVisibility(const QString& partName, bool visible)
+{
+    if (!m_actorMap.contains(partName)) {
+        qWarning() << "STEPModelTreeWidget: 找不到部件:" << partName;
+        return;
+    }
+    
+    vtkActor* actor = m_actorMap[partName];
+    if (actor) {
+        actor->SetVisibility(visible);
+        qDebug() << "STEPModelTreeWidget: 设置部件可见性:" << partName << visible;
+    }
 }
 
 // ==================== 缓存功能实现 ====================
@@ -641,6 +731,13 @@ bool STEPModelTreeWidget::loadFromCache(const QString& cachePath)
                 // 保存到Actor映射
                 m_actorMap[partName] = actor;
                 loadedCount++;
+                
+                // NAUO8 默认不显示（机器人底座/安装板）
+                if (partName == "NAUO8") {
+                    actor->SetVisibility(false);
+                    item->setCheckState(1, Qt::Unchecked);  // 第1列是可见性勾选框
+                    qDebug() << "STEPModelTreeWidget: NAUO8 默认隐藏";
+                }
                 
                 // 定期更新UI
                 if (loadedCount % 10 == 0) {

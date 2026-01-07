@@ -32,6 +32,7 @@
 #include <QTimer>
 #include <QThread>
 #include <QMutex>
+#include <array>
 
 // Forward declarations for OpenCASCADE
 class TopoDS_Shape;
@@ -78,6 +79,9 @@ public:
     void AnimateRobotToPosition(double x, double y, double z, double rx, double ry, double rz, int durationMs = 2000);
     void StartRobotAnimation();
     
+    // 机械臂关节控制（6轴）
+    void UpdateRobotJoints(const std::array<double, 6>& jointAngles);
+    
     // 视图控制
     void ResetCamera();
     void FitToScene();
@@ -94,6 +98,17 @@ public:
     
     // 系统日志接口
     void SetStatusPanel(StatusPanel* statusPanel);
+    
+    // 设置STEP模型树引用（用于关节变换）
+    void SetSTEPModelTreeWidget(STEPModelTreeWidget* treeWidget) { m_modelTreeWidget = treeWidget; }
+    
+    // 启用/禁用机器人按钮
+    void enableRobotToggleButton(bool enable) { 
+        if (m_toggleRobotBtn) {
+            m_toggleRobotBtn->setEnabled(enable);
+            m_robotLoaded = enable;
+        }
+    }
 
 signals:
     void ModelLoaded(const QString& modelType, bool success);
@@ -167,6 +182,9 @@ private:
     
     // 系统日志面板
     StatusPanel* m_statusPanel;
+    
+    // STEP模型树引用（用于关节变换）
+    STEPModelTreeWidget* m_modelTreeWidget;
 };
 
 } // namespace UI
