@@ -35,7 +35,7 @@
 4. **✅ 验证环境配置**
    ```bash
    # 环境验证脚本
-   scripts/verify_setup.bat
+   scripts/build_test.bat
    ```
 
 5. **🏗️ 编译项目**
