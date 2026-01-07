@@ -381,6 +381,7 @@ void RobotControlPanel::setupControlButtons()
     m_stopBtn = new QPushButton("停止", this);
     m_servoOnBtn = new QPushButton("伺服ON", this);
     m_servoOffBtn = new QPushButton("伺服OFF", this);
+    m_loadRobotModelBtn = new QPushButton("加载机器人模型", this);
     
     // 停止按钮特殊样式
     m_stopBtn->setStyleSheet(
@@ -400,10 +401,29 @@ void RobotControlPanel::setupControlButtons()
         "}"
     );
     
+    // 加载模型按钮特殊样式
+    m_loadRobotModelBtn->setStyleSheet(
+        "QPushButton {"
+        "   background-color: #1976d2;"
+        "   color: white;"
+        "   font-weight: bold;"
+        "   padding: 8px 16px;"
+        "   border: none;"
+        "   border-radius: 4px;"
+        "}"
+        "QPushButton:hover {"
+        "   background-color: #1565c0;"
+        "}"
+        "QPushButton:pressed {"
+        "   background-color: #0d47a1;"
+        "}"
+    );
+    
     layout->addWidget(m_homeBtn, 0, 0);
     layout->addWidget(m_stopBtn, 0, 1);
     layout->addWidget(m_servoOnBtn, 1, 0);
     layout->addWidget(m_servoOffBtn, 1, 1);
+    layout->addWidget(m_loadRobotModelBtn, 2, 0, 1, 2);
     
     m_mainLayout->addWidget(m_controlGroup);
 }
@@ -485,6 +505,9 @@ void RobotControlPanel::connectSignals()
     connect(m_stopBtn, &QPushButton::clicked, this, &RobotControlPanel::onStopClicked);
     connect(m_servoOnBtn, &QPushButton::clicked, this, &RobotControlPanel::onServoOnClicked);
     connect(m_servoOffBtn, &QPushButton::clicked, this, &RobotControlPanel::onServoOffClicked);
+    connect(m_loadRobotModelBtn, &QPushButton::clicked, this, [this]() {
+        emit loadRobotModelRequested();
+    });
     
     // 初始化时设置为仿真模式
     QTimer::singleShot(0, this, [this]() {

@@ -100,13 +100,8 @@ MainWindow::MainWindow(QWidget *parent)
     m_statusLabel->setText("VTK 3D引擎已就绪");
     if (m_statusPanel) {
         m_statusPanel->addLogMessage("SUCCESS", "VTK 3D可视化引擎初始化完成");
-        m_statusPanel->addLogMessage("INFO", "系统就绪，可以开始导入点云数据");
+        m_statusPanel->addLogMessage("INFO", "系统就绪，可以开始导入点云数据或加载机器人模型");
     }
-    
-    // 延迟加载机器人模型（等待VTK完全初始化）
-    QTimer::singleShot(500, this, [this]() {
-        loadRobotModel();
-    });
 }
 
 MainWindow::~MainWindow()
@@ -362,6 +357,10 @@ void MainWindow::setupDockWidgets()
                         .arg(angles[3], 0, 'f', 1).arg(angles[4], 0, 'f', 1).arg(angles[5], 0, 'f', 1));
                 }
             });
+    
+    // 连接加载机器人模型信号
+    connect(m_robotControlPanel, &Robot::RobotControlPanel::loadRobotModelRequested,
+            this, &MainWindow::loadRobotModel);
     
     // 将面板堆叠为标签页，系统日志为默认
     tabifyDockWidget(m_statusDock, m_trajectoryDock);

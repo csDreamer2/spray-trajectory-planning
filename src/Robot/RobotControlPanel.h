@@ -99,6 +99,11 @@ signals:
      */
     void disconnectRequested();
 
+    /**
+     * @brief 请求加载机器人模型
+     */
+    void loadRobotModelRequested();
+
 private slots:
     void onJointAngleChanged(int jointIndex, double angle);
     void onConnectClicked();
@@ -159,6 +164,9 @@ private:
     QPushButton* m_stopBtn;
     QPushButton* m_servoOnBtn;
     QPushButton* m_servoOffBtn;
+    
+    // 模型加载按钮
+    QPushButton* m_loadRobotModelBtn;
     
     bool m_updating;
 };
