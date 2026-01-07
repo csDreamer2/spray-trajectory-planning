@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QDebug>
 #include <QStandardPaths>
+#include "../Models/WorkpieceData.h"
 
 namespace Data {
 

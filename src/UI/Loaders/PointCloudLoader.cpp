@@ -1,4 +1,5 @@
 #include "PointCloudLoader.h"
+#include "../../Data/PointCloud/PointCloudParser.h"
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QFileInfo>

@@ -1,5 +1,8 @@
 #include "DatabaseInitializer.h"
 #include "DatabaseManager.h"
+#include "../Models/BaseModel.h"
+#include "../Models/WorkpieceData.h"
+#include "../Models/TrajectoryData.h"
 #include <QDebug>
 #include <QSqlQuery>
 #include <QSqlError>

@@ -1,9 +1,12 @@
 #include "RobotControlPanel.h"
-#include "RobotController.h"
+#include "../Control/RobotController.h"
 #include <QDebug>
 #include <QMessageBox>
 #include <QTimer>
 #include <QScrollArea>
+#include <QFileDialog>
+#include <QDir>
+#include <QApplication>
 
 namespace Robot {
 
@@ -506,7 +509,45 @@ void RobotControlPanel::connectSignals()
     connect(m_servoOnBtn, &QPushButton::clicked, this, &RobotControlPanel::onServoOnClicked);
     connect(m_servoOffBtn, &QPushButton::clicked, this, &RobotControlPanel::onServoOffClicked);
     connect(m_loadRobotModelBtn, &QPushButton::clicked, this, [this]() {
-        emit loadRobotModelRequested();
+        // 弹出对话框让用户选择机器人模型
+        QString appDir = QApplication::applicationDirPath();
+        
+        // 尝试找到data/model目录
+        QStringList possibleDirs = {
+            appDir + "/../../../data/model",  // build/bin/Debug -> root
+            appDir + "/../../data/model",     // build/bin -> root
+            appDir + "/../data/model",        // build -> root
+            appDir + "/data/model",
+            "data/model",
+            "../data/model",
+            "../../data/model",
+            "../../../data/model"
+        };
+        
+        QString modelDir;
+        for (const QString& dir : possibleDirs) {
+            QDir d(dir);
+            if (d.exists()) {
+                modelDir = QFileInfo(dir).absoluteFilePath();
+                break;
+            }
+        }
+        
+        if (modelDir.isEmpty()) {
+            modelDir = QDir::currentPath();
+        }
+        
+        // 打开文件选择对话框
+        QString selectedFile = QFileDialog::getOpenFileName(
+            this,
+            "选择机器人模型文件",
+            modelDir,
+            "STEP 文件 (*.STEP *.step);;所有文件 (*.*)"
+        );
+        
+        if (!selectedFile.isEmpty()) {
+            emit loadRobotModelRequested(selectedFile);
+        }
     });
     
     // 初始化时设置为仿真模式

@@ -1,7 +1,7 @@
 #include "VTKWidget.h"
-#include "StatusPanel.h"
-#include "STEPModelTreeWidget.h"
-#include "../Data/STEPModelTree.h"  // 添加STEP模型树头文件
+#include "../Panels/StatusPanel.h"
+#include "../ModelTree/STEPModelTreeWidget.h"
+#include "../../Data/STEP/STEPModelTree.h"  // 添加STEP模型树头文件
 #include <QDebug>
 #include <QMessageBox>
 #include <QFileInfo>

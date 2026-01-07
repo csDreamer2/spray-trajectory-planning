@@ -6,7 +6,7 @@
 #include <QJsonArray>
 #include <QString>
 #include <QDateTime>
-#include "WorkpieceData.h"
+#include "../Models/WorkpieceData.h"
 
 namespace Data {
 

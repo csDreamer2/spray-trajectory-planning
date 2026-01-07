@@ -101,8 +101,9 @@ signals:
 
     /**
      * @brief 请求加载机器人模型
+     * @param modelPath 机器人模型文件路径
      */
-    void loadRobotModelRequested();
+    void loadRobotModelRequested(const QString& modelPath);
 
 private slots:
     void onJointAngleChanged(int jointIndex, double angle);

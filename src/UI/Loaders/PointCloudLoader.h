@@ -4,7 +4,7 @@
 #include <QThread>
 #include <QJsonObject>
 #include <QString>
-#include "../Data/PointCloudParser.h"
+#include "../../Data/PointCloud/PointCloudParser.h"
 
 namespace UI {
 

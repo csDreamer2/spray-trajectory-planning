@@ -56,6 +56,30 @@ endif()
 
 message(STATUS "✅ VTK found: ${VTK_VERSION}")
 message(STATUS "VTK_DIR: ${VTK_DIR}")
+message(STATUS "VTK_LIBRARIES: ${VTK_LIBRARIES}")
+message(STATUS "VTK_LIBRARY_DIRS: ${VTK_LIBRARY_DIRS}")
+
+# 显式添加 VTK 库目录
+link_directories(${VTK_LIBRARY_DIRS})
+
+if(NOT VTK_FOUND)
+    message(FATAL_ERROR "VTK not found! Please check VTK_DIR: ${VTK_DIR}")
+endif()
+
+message(STATUS "✅ VTK found: ${VTK_VERSION}")
+message(STATUS "VTK_DIR: ${VTK_DIR}")
+message(STATUS "VTK_LIBRARIES: ${VTK_LIBRARIES}")
+message(STATUS "VTK_LIBRARY_DIRS: ${VTK_LIBRARY_DIRS}")
+
+# 显式添加 VTK 库目录
+link_directories(${VTK_LIBRARY_DIRS})
+
+# 包含VTK的CMake模块
+include(${VTK_USE_FILE})
+
+# 找OpenCASCADE
+find_package(OpenCASCADE REQUIRED)
+message(STATUS "✅ OpenCASCADE found")
 
 # 设置PCL（禁用PCL查找VTK）
 set(PCL_ROOT "F:/PCL 1.13.0")
@@ -84,11 +108,11 @@ set(CMAKE_AUTORCC ON)
 include_directories(${CMAKE_SOURCE_DIR}/src)
 
 # 添加子目录
-add_subdirectory(src/UI)
 add_subdirectory(src/Core)
-add_subdirectory(src/Simulation)
-add_subdirectory(src/Robot)
 add_subdirectory(src/Data)
+add_subdirectory(src/Robot)
+add_subdirectory(src/Simulation)
+add_subdirectory(src/UI)
 
 # 主可执行文件
 add_executable(SprayTrajectoryPlanning
@@ -106,7 +130,14 @@ target_link_libraries(SprayTrajectoryPlanning
     Qt6::Sql
     Qt6::OpenGL
     Qt6::OpenGLWidgets
+    # 显式添加 VTK 库
     ${VTK_LIBRARIES}
+    # 显式添加 GUISupportQt 库（从 paths.cmake 定义）
+    $<$<CONFIG:Debug>:${VTK_GUISUPPORTQT_LIB_DEBUG}>
+    $<$<CONFIG:Release>:${VTK_GUISUPPORTQT_LIB_RELEASE}>
+    # 显式添加 IOXML 库（从 paths.cmake 定义）
+    $<$<CONFIG:Debug>:${VTK_IOXML_LIB_DEBUG}>
+    $<$<CONFIG:Release>:${VTK_IOXML_LIB_RELEASE}>
     ${PCL_LIBRARIES}
     # OpenCASCADE核心库（Debug版本）
     TKernel TKMath TKBRep TKGeomBase TKGeomAlgo TKTopAlgo TKPrim

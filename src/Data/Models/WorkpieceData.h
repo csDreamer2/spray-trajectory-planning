@@ -4,7 +4,6 @@
 #include "BaseModel.h"
 #include <QJsonObject>
 #include <QVector3D>
-#include <QtGui/QVector3D>
 
 namespace Data {
 

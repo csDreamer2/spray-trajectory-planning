@@ -28,6 +28,8 @@
 #include <XCAFApp_Application.hxx>
 #include <XCAFDoc_DocumentTool.hxx>
 #include <XCAFDoc_ShapeTool.hxx>
+#include "../../Data/STEP/STEPModelTree.h"
+#include "../../Data/STEP/STEPModelTreeWorker.h"
 #include <TDataStd_Name.hxx>
 #include <TDF_ChildIterator.hxx>
 #include <TopExp_Explorer.hxx>

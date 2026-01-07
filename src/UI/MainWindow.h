@@ -37,6 +37,10 @@ class SafetyPanel;
 class PointCloudLoader;
 class ModelTreeDockWidget;
 class WorkpieceManagerPanel;
+class SafetyPanel;
+class PointCloudLoader;
+class ModelTreeDockWidget;
+class WorkpieceManagerPanel;
 }
 
 class STEPModelTree;
@@ -79,7 +83,7 @@ private slots:
     void OnPointCloudLoadProgress(int progress);
     void OnPointCloudLoadCanceled();
     
-    void loadRobotModel();  // 加载机器人模型
+    void loadRobotModel(const QString& modelPath = "");  // 加载机器人模型
 
 private:
     void setupUI();

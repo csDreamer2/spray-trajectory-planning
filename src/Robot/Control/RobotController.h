@@ -4,7 +4,7 @@
 #include <QObject>
 #include <QTimer>
 #include <memory>
-#include "RobotKinematics.h"
+#include "../Kinematics/RobotKinematics.h"
 
 namespace Robot {
 

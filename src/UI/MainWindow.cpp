@@ -1,16 +1,16 @@
 #include "MainWindow.h"
-#include "VTKWidget.h"
-#include "ParameterPanel.h"
-#include "StatusPanel.h"
-#include "SafetyPanel.h"
-#include "PointCloudLoader.h"
-#include "ModelTreeDockWidget.h"
-#include "STEPModelTreeWidget.h"
-#include "WorkpieceManagerPanel.h"
-#include "../Data/PointCloudParser.h"
-#include "../Data/STEPModelTree.h"
-#include "../Robot/RobotController.h"
-#include "../Robot/RobotControlPanel.h"
+#include "Visualization/VTKWidget.h"
+#include "Panels/ParameterPanel.h"
+#include "Panels/StatusPanel.h"
+#include "Panels/SafetyPanel.h"
+#include "Loaders/PointCloudLoader.h"
+#include "ModelTree/ModelTreeDockWidget.h"
+#include "ModelTree/STEPModelTreeWidget.h"
+#include "Panels/WorkpieceManagerPanel.h"
+#include "../Data/PointCloud/PointCloudParser.h"
+#include "../Data/STEP/STEPModelTree.h"
+#include "../Robot/Control/RobotController.h"
+#include "../Robot/UI/RobotControlPanel.h"
 
 #include <QApplication>
 #include <QMenuBar>
@@ -239,40 +239,7 @@ void MainWindow::setupDockWidgets()
 {
     // ========== 所有面板都放在右侧 ==========
     
-    // 1. 轨迹规划面板
-    m_trajectoryDock = new QDockWidget("轨迹规划", this);
-    m_trajectoryDock->setObjectName("trajectoryDock");
-    m_trajectoryDock->setAllowedAreas(Qt::AllDockWidgetAreas);
-    m_trajectoryDock->setFeatures(QDockWidget::DockWidgetClosable | 
-                                   QDockWidget::DockWidgetMovable | 
-                                   QDockWidget::DockWidgetFloatable);
-    QWidget* trajectoryWidget = createTrajectoryPanel();
-    m_trajectoryDock->setWidget(trajectoryWidget);
-    addDockWidget(Qt::RightDockWidgetArea, m_trajectoryDock);
-    
-    // 2. 参数设置面板
-    m_parameterDock = new QDockWidget("参数设置", this);
-    m_parameterDock->setObjectName("parameterDock");
-    m_parameterDock->setAllowedAreas(Qt::AllDockWidgetAreas);
-    m_parameterDock->setFeatures(QDockWidget::DockWidgetClosable | 
-                                  QDockWidget::DockWidgetMovable | 
-                                  QDockWidget::DockWidgetFloatable);
-    QWidget* parameterWidget = createParameterPanel();
-    m_parameterDock->setWidget(parameterWidget);
-    addDockWidget(Qt::RightDockWidgetArea, m_parameterDock);
-    
-    // 3. 系统日志面板 - 默认显示
-    m_statusDock = new QDockWidget("系统日志", this);
-    m_statusDock->setObjectName("statusDock");
-    m_statusDock->setAllowedAreas(Qt::AllDockWidgetAreas);
-    m_statusDock->setFeatures(QDockWidget::DockWidgetClosable | 
-                               QDockWidget::DockWidgetMovable | 
-                               QDockWidget::DockWidgetFloatable);
-    m_statusPanel = new UI::StatusPanel(this);
-    m_statusDock->setWidget(m_statusPanel);
-    addDockWidget(Qt::RightDockWidgetArea, m_statusDock);
-    
-    // 4. STEP模型树面板
+    // 1. STEP模型树面板 - 放在右侧上部
     m_modelTreeDock = new QDockWidget("STEP模型树", this);
     m_modelTreeDock->setObjectName("modelTreeDock");
     m_modelTreeDock->setAllowedAreas(Qt::AllDockWidgetAreas);
@@ -288,7 +255,58 @@ void MainWindow::setupDockWidgets()
     // 保存引用以便后续使用
     m_modelTreePanel = modelTreeWidget;
     
-    // 5. 安全监控面板
+    // 2. 机器人控制面板 - 放在右侧下部
+    m_robotControlDock = new QDockWidget("机器人控制", this);
+    m_robotControlDock->setObjectName("robotControlDock");
+    m_robotControlDock->setAllowedAreas(Qt::AllDockWidgetAreas);
+    m_robotControlDock->setFeatures(QDockWidget::DockWidgetClosable | 
+                                     QDockWidget::DockWidgetMovable | 
+                                     QDockWidget::DockWidgetFloatable);
+    
+    // 创建机器人控制器和面板
+    m_robotController = new Robot::RobotController(this);
+    m_robotControlPanel = new Robot::RobotControlPanel(this);
+    m_robotControlPanel->setRobotController(m_robotController);
+    m_robotControlDock->setWidget(m_robotControlPanel);
+    addDockWidget(Qt::RightDockWidgetArea, m_robotControlDock);
+    
+    // 分割模型树和机器人控制面板：上部1/4，下部3/4
+    splitDockWidget(m_modelTreeDock, m_robotControlDock, Qt::Vertical);
+    
+    // 3. 轨迹规划面板
+    m_trajectoryDock = new QDockWidget("轨迹规划", this);
+    m_trajectoryDock->setObjectName("trajectoryDock");
+    m_trajectoryDock->setAllowedAreas(Qt::AllDockWidgetAreas);
+    m_trajectoryDock->setFeatures(QDockWidget::DockWidgetClosable | 
+                                   QDockWidget::DockWidgetMovable | 
+                                   QDockWidget::DockWidgetFloatable);
+    QWidget* trajectoryWidget = createTrajectoryPanel();
+    m_trajectoryDock->setWidget(trajectoryWidget);
+    addDockWidget(Qt::RightDockWidgetArea, m_trajectoryDock);
+    
+    // 4. 参数设置面板
+    m_parameterDock = new QDockWidget("参数设置", this);
+    m_parameterDock->setObjectName("parameterDock");
+    m_parameterDock->setAllowedAreas(Qt::AllDockWidgetAreas);
+    m_parameterDock->setFeatures(QDockWidget::DockWidgetClosable | 
+                                  QDockWidget::DockWidgetMovable | 
+                                  QDockWidget::DockWidgetFloatable);
+    QWidget* parameterWidget = createParameterPanel();
+    m_parameterDock->setWidget(parameterWidget);
+    addDockWidget(Qt::RightDockWidgetArea, m_parameterDock);
+    
+    // 5. 系统日志面板
+    m_statusDock = new QDockWidget("系统日志", this);
+    m_statusDock->setObjectName("statusDock");
+    m_statusDock->setAllowedAreas(Qt::AllDockWidgetAreas);
+    m_statusDock->setFeatures(QDockWidget::DockWidgetClosable | 
+                               QDockWidget::DockWidgetMovable | 
+                               QDockWidget::DockWidgetFloatable);
+    m_statusPanel = new UI::StatusPanel(this);
+    m_statusDock->setWidget(m_statusPanel);
+    addDockWidget(Qt::RightDockWidgetArea, m_statusDock);
+    
+    // 6. 安全监控面板
     m_safetyDock = new QDockWidget("安全监控", this);
     m_safetyDock->setObjectName("safetyDock");
     m_safetyDock->setAllowedAreas(Qt::AllDockWidgetAreas);
@@ -299,7 +317,7 @@ void MainWindow::setupDockWidgets()
     m_safetyDock->setWidget(safetyWidget);
     addDockWidget(Qt::RightDockWidgetArea, m_safetyDock);
     
-    // 6. 工件库面板（新增）
+    // 7. 工件库面板（新增）
     m_workpieceManagerDock = new QDockWidget("工件库", this);
     m_workpieceManagerDock->setObjectName("workpieceManagerDock");
     m_workpieceManagerDock->setAllowedAreas(Qt::AllDockWidgetAreas);
@@ -328,21 +346,6 @@ void MainWindow::setupDockWidgets()
                 m_statusPanel->addLogMessage("INFO", QString("选中工件: %1").arg(QFileInfo(filePath).fileName()));
             });
     
-    // 7. 机器人控制面板
-    m_robotControlDock = new QDockWidget("机器人控制", this);
-    m_robotControlDock->setObjectName("robotControlDock");
-    m_robotControlDock->setAllowedAreas(Qt::AllDockWidgetAreas);
-    m_robotControlDock->setFeatures(QDockWidget::DockWidgetClosable | 
-                                     QDockWidget::DockWidgetMovable | 
-                                     QDockWidget::DockWidgetFloatable);
-    
-    // 创建机器人控制器和面板
-    m_robotController = new Robot::RobotController(this);
-    m_robotControlPanel = new Robot::RobotControlPanel(this);
-    m_robotControlPanel->setRobotController(m_robotController);
-    m_robotControlDock->setWidget(m_robotControlPanel);
-    addDockWidget(Qt::RightDockWidgetArea, m_robotControlDock);
-    
     // 连接机器人控制面板信号到VTK视图（用于3D仿真）
     connect(m_robotControlPanel, &Robot::RobotControlPanel::jointAnglesChanged,
             this, [this](const std::array<double, 6>& angles) {
@@ -359,34 +362,39 @@ void MainWindow::setupDockWidgets()
             });
     
     // 连接加载机器人模型信号
-    connect(m_robotControlPanel, &Robot::RobotControlPanel::loadRobotModelRequested,
-            this, &MainWindow::loadRobotModel);
+    connect(m_robotControlPanel, QOverload<const QString&>::of(&Robot::RobotControlPanel::loadRobotModelRequested),
+            this, QOverload<const QString&>::of(&MainWindow::loadRobotModel));
     
-    // 将面板堆叠为标签页，系统日志为默认
-    tabifyDockWidget(m_statusDock, m_trajectoryDock);
+    // 将其他面板 tabify 到机器人控制面板下
+    tabifyDockWidget(m_robotControlDock, m_trajectoryDock);
     tabifyDockWidget(m_trajectoryDock, m_parameterDock);
-    tabifyDockWidget(m_parameterDock, m_modelTreeDock);
-    tabifyDockWidget(m_modelTreeDock, m_safetyDock);
+    tabifyDockWidget(m_parameterDock, m_statusDock);
+    tabifyDockWidget(m_statusDock, m_safetyDock);
     tabifyDockWidget(m_safetyDock, m_workpieceManagerDock);
-    tabifyDockWidget(m_workpieceManagerDock, m_robotControlDock);
-    m_statusDock->raise(); // 默认显示系统日志
+    
+    // 设置默认显示的面板
+    m_modelTreeDock->raise();  // 模型树显示在上部
+    m_robotControlDock->raise(); // 机器人控制显示在下部
     
     // ========== 添加面板到视图菜单 ==========
     if (m_panelMenu) {
+        m_panelMenu->addAction(m_modelTreeDock->toggleViewAction());
+        m_panelMenu->addAction(m_robotControlDock->toggleViewAction());
         m_panelMenu->addAction(m_trajectoryDock->toggleViewAction());
         m_panelMenu->addAction(m_parameterDock->toggleViewAction());
-        m_panelMenu->addAction(m_modelTreeDock->toggleViewAction());
         m_panelMenu->addAction(m_statusDock->toggleViewAction());
         m_panelMenu->addAction(m_safetyDock->toggleViewAction());
         m_panelMenu->addAction(m_workpieceManagerDock->toggleViewAction());
-        m_panelMenu->addAction(m_robotControlDock->toggleViewAction());
     }
     
     // 设置面板大小限制
     setupDockSizeConstraints();
     
-    // 设置右侧面板默认宽度，给足够空间显示内容
-    resizeDocks({m_statusDock}, {420}, Qt::Horizontal);
+    // 设置右侧面板默认宽度和高度
+    // 右侧宽度 420px
+    resizeDocks({m_robotControlDock, m_modelTreeDock}, {420, 420}, Qt::Horizontal);
+    // 右侧上部模型树 1/4 (约 225px)，下部机器人控制 3/4 (约 675px)
+    resizeDocks({m_modelTreeDock, m_robotControlDock}, {225, 675}, Qt::Vertical);
     
     // 设置VTKWidget的StatusPanel引用，用于输出性能统计
     if (m_vtkView && m_statusPanel) {
@@ -600,30 +608,51 @@ void MainWindow::restoreLayout()
 
 void MainWindow::resetLayout()
 {
-    // 重置所有面板到右侧
-    QList<QDockWidget*> docks = {m_trajectoryDock, m_parameterDock, m_statusDock, m_safetyDock, m_workpieceManagerDock};
+    // 第一步：移除所有面板
+    QList<QDockWidget*> allDocks = {m_robotControlDock, m_trajectoryDock, m_parameterDock, 
+                                     m_statusDock, m_safetyDock, m_workpieceManagerDock, m_modelTreeDock};
     
-    for (auto* dock : docks) {
+    for (auto* dock : allDocks) {
         if (dock) {
-            dock->setFloating(false);
-            dock->show();
-            addDockWidget(Qt::RightDockWidgetArea, dock);
+            removeDockWidget(dock);
         }
     }
     
-    // 重新堆叠为标签页，系统日志为默认
-    tabifyDockWidget(m_statusDock, m_trajectoryDock);
-    tabifyDockWidget(m_trajectoryDock, m_parameterDock);
-    tabifyDockWidget(m_parameterDock, m_safetyDock);
-    tabifyDockWidget(m_safetyDock, m_workpieceManagerDock);
+    // 第二步：添加模型树面板到右侧上部
+    addDockWidget(Qt::RightDockWidgetArea, m_modelTreeDock);
+    m_modelTreeDock->setFloating(false);
+    m_modelTreeDock->show();
     
-    m_statusDock->raise(); // 显示系统日志
+    // 第三步：添加机器人控制面板到右侧下部，并与模型树分割
+    addDockWidget(Qt::RightDockWidgetArea, m_robotControlDock);
+    m_robotControlDock->setFloating(false);
+    m_robotControlDock->show();
+    splitDockWidget(m_modelTreeDock, m_robotControlDock, Qt::Vertical);
     
-    // 重新应用大小约束
+    // 第四步：其他面板 tabify 到机器人控制面板下
+    QList<QDockWidget*> otherDocks = {m_trajectoryDock, m_parameterDock, m_statusDock, m_safetyDock, m_workpieceManagerDock};
+    
+    for (auto* dock : otherDocks) {
+        if (dock) {
+            addDockWidget(Qt::RightDockWidgetArea, dock);
+            dock->setFloating(false);
+            dock->show();
+            tabifyDockWidget(m_robotControlDock, dock);
+        }
+    }
+    
+    // 第五步：设置默认显示的面板
+    m_modelTreeDock->raise();  // 模型树显示在上部
+    m_robotControlDock->raise(); // 机器人控制显示在下部
+    
+    // 第六步：重新应用大小约束
     setupDockSizeConstraints();
     
-    // 重置宽度
-    resizeDocks({m_statusDock}, {420}, Qt::Horizontal);
+    // 第七步：设置面板大小
+    // 右侧宽度 420px
+    resizeDocks({m_modelTreeDock, m_robotControlDock}, {420, 420}, Qt::Horizontal);
+    // 右侧上部模型树 1/4 (约 225px)，下部机器人控制 3/4 (约 675px)
+    resizeDocks({m_modelTreeDock, m_robotControlDock}, {225, 675}, Qt::Vertical);
     
     m_statusLabel->setText("布局已重置");
 }
@@ -1004,36 +1033,39 @@ void MainWindow::OnPointCloudLoadProgress(int) {}
 void MainWindow::OnPointCloudLoadCanceled() {}
 void MainWindow::updateAllStatus() {}
 
-void MainWindow::loadRobotModel()
+void MainWindow::loadRobotModel(const QString& modelPath)
 {
-    // 从应用程序路径向上查找项目根目录
-    QString appDir = QApplication::applicationDirPath();
+    QString robotModelPath = modelPath;
     
-    // 尝试多种路径查找机器人模型（build/bin/Debug -> 项目根目录）
-    QStringList possiblePaths = {
-        appDir + "/../../../data/model/MPX3500.STEP",  // build/bin/Debug -> root
-        appDir + "/../../data/model/MPX3500.STEP",     // build/bin -> root
-        appDir + "/../data/model/MPX3500.STEP",        // build -> root
-        appDir + "/data/model/MPX3500.STEP",
-        "data/model/MPX3500.STEP",
-        "../data/model/MPX3500.STEP",
-        "../../data/model/MPX3500.STEP",
-        "../../../data/model/MPX3500.STEP"
-    };
-    
-    QString robotModelPath;
-    for (const QString& path : possiblePaths) {
-        QFileInfo fi(path);
-        if (fi.exists()) {
-            robotModelPath = fi.absoluteFilePath();
-            qDebug() << "MainWindow: 找到机器人模型:" << robotModelPath;
-            break;
+    // 如果没有提供路径，则使用默认的MPX3500
+    if (robotModelPath.isEmpty()) {
+        // 从应用程序路径向上查找项目根目录
+        QString appDir = QApplication::applicationDirPath();
+        
+        // 尝试多种路径查找机器人模型（build/bin/Debug -> 项目根目录）
+        QStringList possiblePaths = {
+            appDir + "/../../../data/model/MPX3500.STEP",  // build/bin/Debug -> root
+            appDir + "/../../data/model/MPX3500.STEP",     // build/bin -> root
+            appDir + "/../data/model/MPX3500.STEP",        // build -> root
+            appDir + "/data/model/MPX3500.STEP",
+            "data/model/MPX3500.STEP",
+            "../data/model/MPX3500.STEP",
+            "../../data/model/MPX3500.STEP",
+            "../../../data/model/MPX3500.STEP"
+        };
+        
+        for (const QString& path : possiblePaths) {
+            QFileInfo fi(path);
+            if (fi.exists()) {
+                robotModelPath = fi.absoluteFilePath();
+                qDebug() << "MainWindow: 找到机器人模型:" << robotModelPath;
+                break;
+            }
         }
     }
     
     if (robotModelPath.isEmpty()) {
         qDebug() << "MainWindow: 未找到机器人模型文件";
-        qDebug() << "MainWindow: 应用程序路径:" << appDir;
         if (m_statusPanel) {
             m_statusPanel->addLogMessage("WARNING", "未找到机器人模型文件，仿真模式将使用简化模型");
         }

@@ -1,7 +1,7 @@
 #include "DatabaseManager.h"
-#include "BaseModel.h"
-#include "WorkpieceData.h"
-#include "TrajectoryData.h"
+#include "../Models/BaseModel.h"
+#include "../Models/WorkpieceData.h"
+#include "../Models/TrajectoryData.h"
 #include <QSqlDatabase>
 #include <QSqlQuery>
 #include <QSqlError>
