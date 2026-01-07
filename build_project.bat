@@ -56,10 +56,9 @@ echo 可执行文件位置: build\Debug\SprayTrajectoryPlanning.exe
 echo.
 echo 测试步骤:
 echo 1. 运行程序: build\Debug\SprayTrajectoryPlanning.exe
-echo 2. 点击 "文件" -^> "导入STEP模型"
+echo 2. 点击 "文件" -^> "快速导入STEP模型"
 echo 3. 选择 data\model\MPX3500.step
 echo 4. 观察模型树和3D视图
 echo.
-echo 详细测试指南: docs\step-loading-test-guide.md
 echo.
 pause
