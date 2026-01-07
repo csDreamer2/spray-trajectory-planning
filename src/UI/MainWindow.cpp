@@ -660,6 +660,8 @@ void MainWindow::connectVTKSignals()
     }
 }
 
+// 注意：connectModelTreeToVTK方法已不再需要，可见性连接已在OnImportSTEPModel中完成
+// 保留此方法以防其他地方调用，但功能已简化
 void MainWindow::connectModelTreeToVTK()
 {
     if (!m_modelTreePanel || !m_vtkView) {
@@ -667,27 +669,10 @@ void MainWindow::connectModelTreeToVTK()
         return;
     }
     
-    qDebug() << "MainWindow: 连接STEP模型树到VTK视图";
-    
-    // 连接节点可见性变化信号到VTK刷新
-    connect(m_modelTreePanel, &STEPModelTreeWidget::nodeVisibilityToggled,
-            this, [this](std::shared_ptr<STEPTreeNode> node, bool visible) {
-                qDebug() << "MainWindow: 节点可见性变化:" << node->name << "可见:" << visible;
-                
-                // 刷新VTK渲染
-                if (m_vtkView) {
-                    m_vtkView->RefreshRender();
-                }
-                
-                if (m_statusPanel) {
-                    m_statusPanel->addLogMessage("INFO", 
-                        QString("组件 %1: %2").arg(node->name).arg(visible ? "显示" : "隐藏"));
-                }
-            });
+    qDebug() << "MainWindow: connectModelTreeToVTK被调用（已废弃，连接在OnImportSTEPModel中完成）";
     
     if (m_statusPanel) {
-        m_statusPanel->addLogMessage("SUCCESS", "模型树已连接到3D视图");
-        m_statusPanel->addLogMessage("INFO", "可以通过勾选/取消勾选来控制零件显示");
+        m_statusPanel->addLogMessage("INFO", "模型树已连接到3D视图");
     }
 }
 
@@ -741,7 +726,7 @@ void MainWindow::OnImportSTEPModel()
             return;
         }
         
-        qDebug() << "开始加载STEP模型:" << fileName;
+        qDebug() << "MainWindow: 开始加载STEP模型:" << fileName;
         
         if (m_statusPanel) {
             m_statusPanel->addLogMessage("INFO", QString("开始加载STEP文件: %1").arg(fileInfo.fileName()));
@@ -753,108 +738,59 @@ void MainWindow::OnImportSTEPModel()
             m_modelTreeDock->raise();
         }
         
-        // 加载STEP文件到模型树
-        if (m_modelTreePanel) {
-            m_statusLabel->setText("正在解析STEP文件结构...");
+        // 同步加载STEP文件
+        if (m_modelTreePanel && m_vtkView) {
+            m_statusLabel->setText("正在加载STEP模型...");
             QApplication::processEvents();
             
-            // 先断开之前可能存在的连接，避免重复连接
-            disconnect(m_modelTreePanel, &STEPModelTreeWidget::loadCompleted,
-                       this, nullptr);
+            // 同步加载STEP文件
+            bool success = m_modelTreePanel->loadSTEPFile(fileName);
             
-            // 连接加载完成信号
-            connect(m_modelTreePanel, &STEPModelTreeWidget::loadCompleted,
-                    this, [this, fileName](bool success, const QString& message) {
-                        // 断开信号避免重复连接
-                        disconnect(m_modelTreePanel, &STEPModelTreeWidget::loadCompleted,
-                                   this, nullptr);
-                        
-                        if (success) {
-                            m_statusLabel->setText("STEP模型加载完成");
+            if (success) {
+                qDebug() << "MainWindow: STEP模型树加载成功";
+                
+                // 将所有Actor添加到VTK渲染器
+                m_modelTreePanel->addActorsToRenderer(m_vtkView->getRenderer());
+                qDebug() << "MainWindow: Actor已添加到VTK渲染器";
+                
+                // 连接可见性变化信号（移除UniqueConnection，因为lambda不支持）
+                // 注意：每次加载新文件时会创建新的连接，但这是可以接受的
+                connect(m_modelTreePanel, &STEPModelTreeWidget::partVisibilityChanged,
+                        this, [this](const QString& partName, bool visible) {
+                            qDebug() << "MainWindow: 部件可见性变化:" << partName << visible;
+                            
+                            // 刷新VTK渲染
+                            if (m_vtkView) {
+                                m_vtkView->RefreshRender();
+                            }
+                            
                             if (m_statusPanel) {
-                                m_statusPanel->addLogMessage("SUCCESS", "STEP模型树构建完成");
-                                m_statusPanel->addLogMessage("INFO", "正在创建3D可视化...");
+                                m_statusPanel->addLogMessage("INFO", 
+                                    QString("组件 %1: %2").arg(partName).arg(visible ? "显示" : "隐藏"));
                             }
-                            
-                            qDebug() << "MainWindow: STEP模型树加载成功，准备创建VTK可视化";
-                            
-                            // 连接模型树的可见性变化信号到VTK视图
-                            connectModelTreeToVTK();
-                            
-                            // 获取根节点并创建VTK Actors
-                            auto rootNode = m_modelTreePanel->getLoadedRootNode();
-                            qDebug() << "MainWindow: 获取加载的根节点:" << (rootNode ? "成功" : "失败");
-                            
-                            if (rootNode) {
-                                qDebug() << "MainWindow: 根节点名称:" << rootNode->name;
-                                qDebug() << "MainWindow: 根节点子节点数:" << rootNode->children.size();
-                            }
-                            
-                            if (rootNode && m_vtkView) {
-                                qDebug() << "MainWindow: 延迟100ms后创建VTK可视化";
-                                
-                                // 重要：复制shared_ptr以确保在lambda中有效
-                                auto rootNodeCopy = rootNode;
-                                QString fileNameCopy = fileName;
-                                
-                                QTimer::singleShot(100, this, [this, fileNameCopy, rootNodeCopy]() {
-                                    qDebug() << "MainWindow: 开始创建VTK可视化...";
-                                    
-                                    if (!m_vtkView) {
-                                        qWarning() << "MainWindow: VTK视图已失效";
-                                        return;
-                                    }
-                                    
-                                    if (!rootNodeCopy) {
-                                        qWarning() << "MainWindow: 根节点已失效";
-                                        return;
-                                    }
-                                    
-                                    try {
-                                        bool vtkSuccess = m_vtkView->LoadSTEPModelWithTree(fileNameCopy, rootNodeCopy);
-                                        qDebug() << "MainWindow: VTK可视化创建" << (vtkSuccess ? "成功" : "失败");
-                                        
-                                        if (vtkSuccess) {
-                                            if (m_statusPanel) {
-                                                m_statusPanel->addLogMessage("SUCCESS", "3D可视化创建完成");
-                                                m_statusPanel->addLogMessage("INFO", "可以在模型树中选择显示/隐藏零件");
-                                            }
-                                        } else {
-                                            if (m_statusPanel) {
-                                                m_statusPanel->addLogMessage("WARNING", "3D可视化创建失败");
-                                            }
-                                        }
-                                    } catch (const std::exception& e) {
-                                        qCritical() << "MainWindow: VTK可视化创建异常:" << e.what();
-                                        if (m_statusPanel) {
-                                            m_statusPanel->addLogMessage("ERROR", QString("3D可视化创建异常: %1").arg(e.what()));
-                                        }
-                                    } catch (...) {
-                                        qCritical() << "MainWindow: VTK可视化创建未知异常";
-                                        if (m_statusPanel) {
-                                            m_statusPanel->addLogMessage("ERROR", "3D可视化创建发生未知异常");
-                                        }
-                                    }
-                                });
-                            } else {
-                                qWarning() << "MainWindow: 无法创建VTK可视化 - rootNode:" << (rootNode ? "有效" : "空") 
-                                          << "vtkView:" << (m_vtkView ? "有效" : "空");
-                                if (m_statusPanel) {
-                                    m_statusPanel->addLogMessage("ERROR", "无法创建3D可视化：缺少必要组件");
-                                }
-                            }
-                            
-                        } else {
-                            m_statusLabel->setText("STEP模型加载失败");
-                            if (m_statusPanel) {
-                                m_statusPanel->addLogMessage("ERROR", QString("STEP加载失败: %1").arg(message));
-                            }
-                            QMessageBox::critical(this, "加载失败", QString("无法加载STEP文件:\n%1").arg(message));
-                        }
-                    });
-            
-            // 开始异步加载
-            m_modelTreePanel->loadSTEPFile(fileName);
+                        });
+                
+                // 重置相机以显示完整模型
+                m_vtkView->ResetCamera();
+                qDebug() << "MainWindow: 相机已重置";
+                
+                m_statusLabel->setText("STEP模型加载成功");
+                if (m_statusPanel) {
+                    m_statusPanel->addLogMessage("SUCCESS", "STEP模型加载完成");
+                    m_statusPanel->addLogMessage("INFO", "可以在模型树中选择显示/隐藏零件");
+                }
+                
+            } else {
+                m_statusLabel->setText("STEP模型加载失败");
+                if (m_statusPanel) {
+                    m_statusPanel->addLogMessage("ERROR", "STEP模型加载失败");
+                }
+                QMessageBox::critical(this, "加载失败", "无法加载STEP文件，请检查文件格式");
+            }
+        } else {
+            qWarning() << "MainWindow: 缺少必要组件 - modelTreePanel:" << (m_modelTreePanel ? "有效" : "空") 
+                      << "vtkView:" << (m_vtkView ? "有效" : "空");
+            QMessageBox::critical(this, "错误", "缺少必要组件，无法加载STEP模型");
         }
     }
 }

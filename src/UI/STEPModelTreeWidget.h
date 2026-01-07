@@ -1,24 +1,28 @@
 #pragma once
 
 #include <QWidget>
-#include <QTreeView>
+#include <QTreeWidget>
 #include <QVBoxLayout>
 #include <QMenu>
 #include <QAction>
-#include <QProgressBar>
 #include <QLabel>
-#include <QThread>
+#include <QMap>
+#include <QString>
 #include <memory>
-#include <vector>
 
-#include "../Data/STEPModelTree.h"
+// VTK includes
+#include <vtkSmartPointer.h>
+#include <vtkActor.h>
 
-class STEPModelTreeWorker;
+// OpenCASCADE includes
+#include <TopoDS_Shape.hxx>
+#include <TDocStd_Document.hxx>
+#include <TDF_Label.hxx>
 
 /**
- * @brief STEP模型树控件
+ * @brief STEP模型树控件（简化版，同步加载）
  * 
- * 集成了树形视图和模型管理的完整控件，支持异步加载
+ * 参考 123/StepViewerWidget 实现，使用同步加载方式
  */
 class STEPModelTreeWidget : public QWidget {
     Q_OBJECT
@@ -28,66 +32,40 @@ public:
     ~STEPModelTreeWidget();
 
     /**
-     * @brief 异步加载STEP文件
+     * @brief 同步加载STEP文件
      * @param filePath 文件路径
+     * @return 是否成功
      */
-    void loadSTEPFile(const QString& filePath);
+    bool loadSTEPFile(const QString& filePath);
 
     /**
-     * @brief 取消当前加载
+     * @brief 清空场景
      */
-    void cancelLoading();
-
-    /**
-     * @brief 获取模型树管理器
-     * @return STEPModelTree指针
-     */
-    STEPModelTree* getModelTree() const { return m_modelTree; }
+    void clearScene();
 
     /**
      * @brief 获取树形视图
-     * @return QTreeView指针
      */
-    QTreeView* getTreeView() const { return m_treeView; }
+    QTreeWidget* getTreeWidget() const { return m_treeWidget; }
 
     /**
-     * @brief 获取Qt模型
-     * @return QStandardItemModel指针
+     * @brief 获取OCAF文档
      */
-    QStandardItemModel* getQtModel() const { return m_modelTree ? m_modelTree->getQtModel() : nullptr; }
-
+    Handle(TDocStd_Document) getDocument() const { return m_occDoc; }
+    
     /**
-     * @brief 获取加载的根节点（用于VTK可视化）
-     * @return 根节点shared_ptr
+     * @brief 将所有Actor添加到VTK渲染器
+     * @param renderer VTK渲染器
      */
-    std::shared_ptr<STEPTreeNode> getLoadedRootNode() const { return m_loadedRootNode; }
-
+    void addActorsToRenderer(vtkRenderer* renderer);
+    
     /**
-     * @brief 检查是否正在加载
-     * @return 是否正在加载
+     * @brief 从VTK渲染器移除所有Actor
+     * @param renderer VTK渲染器
      */
-    bool isLoading() const { return m_isLoading; }
+    void removeActorsFromRenderer(vtkRenderer* renderer);
 
 signals:
-    /**
-     * @brief 选中节点改变信号
-     * @param selectedNodes 选中的节点列表
-     */
-    void selectionChanged(const std::vector<std::shared_ptr<STEPTreeNode>>& selectedNodes);
-
-    /**
-     * @brief 可见性改变信号
-     * @param visibleShapes 当前可见的形状列表
-     */
-    void visibilityChanged(const std::vector<TopoDS_Shape>& visibleShapes);
-
-    /**
-     * @brief 节点可见性改变信号（用于VTK显示控制）
-     * @param node 改变的节点
-     * @param visible 新的可见状态
-     */
-    void nodeVisibilityToggled(std::shared_ptr<STEPTreeNode> node, bool visible);
-
     /**
      * @brief 加载完成信号
      * @param success 是否成功
@@ -95,53 +73,47 @@ signals:
      */
     void loadCompleted(bool success, const QString& message);
 
+    /**
+     * @brief 节点可见性改变信号
+     * @param partName 部件名称
+     * @param visible 是否可见
+     */
+    void partVisibilityChanged(const QString& partName, bool visible);
+
 private slots:
-    void onSelectionChanged();
-    void onNodeVisibilityChanged(std::shared_ptr<STEPTreeNode> node, bool visible);
-    void onModelTreeLoaded(bool success, const QString& message);
+    void onItemClicked(QTreeWidgetItem* item, int column);
     void onContextMenuRequested(const QPoint& pos);
-    void onItemChanged(QStandardItem* item);  // 新增：监听复选框变化
-    
-    // 异步加载相关槽函数
-    void onWorkerProgressUpdate(int progress, const QString& message);
-    void onWorkerModelTreeLoaded(bool success, const QString& message, std::shared_ptr<STEPTreeNode> rootNode);
-    void onWorkerLoadFailed(const QString& error);
 
 private:
     void setupUI();
     void setupContextMenu();
-    void setupWorker();
-    void showLoadingUI(bool show);
-    void updateModelFromWorkerResult(std::shared_ptr<STEPTreeNode> rootNode);
-    void buildQtModelItemFromNode(std::shared_ptr<STEPTreeNode> node, QStandardItem* parentItem);
-    void setChildrenVisibility(QStandardItem* item, bool visible);  // 新增：递归设置子节点可见性
+    void processShape(const TopoDS_Shape& shape, const TDF_Label& label, 
+                      QTreeWidgetItem* parentItem = nullptr);
+    vtkSmartPointer<vtkActor> createActorFromShape(const TopoDS_Shape& shape);
     
-    std::shared_ptr<STEPTreeNode> getNodeFromItem(QStandardItem* item) const;
-    std::shared_ptr<STEPTreeNode> findNodeInTree(std::shared_ptr<STEPTreeNode> current, STEPTreeNode* target) const;
+    // 辅助函数：递归设置可见性
+    void setItemVisibilityRecursive(QTreeWidgetItem* item, bool visible);
+    
+    // 辅助函数：递归高亮
+    void highlightItemRecursive(QTreeWidgetItem* item);
 
 private:
-    STEPModelTree* m_modelTree;
-    QTreeView* m_treeView;
     QVBoxLayout* m_layout;
-    
-    // 加载进度UI
-    QProgressBar* m_progressBar;
+    QTreeWidget* m_treeWidget;
     QLabel* m_statusLabel;
     
-    // 异步加载
-    QThread* m_workerThread;
-    STEPModelTreeWorker* m_worker;
-    bool m_isLoading;
+    // OpenCASCADE文档
+    Handle(TDocStd_Document) m_occDoc;
     
-    // 保存加载的根节点（用于VTK可视化）
-    std::shared_ptr<STEPTreeNode> m_loadedRootNode;
+    // Actor映射
+    QMap<QString, vtkSmartPointer<vtkActor>> m_actorMap;
+    QMap<QString, TopoDS_Shape> m_shapeMap;
+    
+    // 形状计数器
+    int m_shapeCounter;
     
     // 上下文菜单
     QMenu* m_contextMenu;
-    QAction* m_showAction;
-    QAction* m_hideAction;
-    QAction* m_showOnlyAction;
     QAction* m_expandAction;
     QAction* m_collapseAction;
-    QAction* m_propertiesAction;
 };

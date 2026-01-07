@@ -16,14 +16,10 @@ ModelTreeDockWidget::ModelTreeDockWidget(QWidget* parent)
     setupUI();
 
     // 连接信号
-    connect(m_modelTreeWidget, &STEPModelTreeWidget::visibilityChanged,
-            this, &ModelTreeDockWidget::onVisibilityChanged);
-    connect(m_modelTreeWidget, &STEPModelTreeWidget::selectionChanged,
-            this, &ModelTreeDockWidget::onSelectionChanged);
-    connect(m_modelTreeWidget->getModelTree(), &STEPModelTree::modelTreeLoaded,
+    connect(m_modelTreeWidget, &STEPModelTreeWidget::loadCompleted,
             this, &ModelTreeDockWidget::onModelTreeLoaded);
-    connect(m_modelTreeWidget->getModelTree(), &STEPModelTree::loadProgress,
-            this, &ModelTreeDockWidget::onLoadProgress);
+    connect(m_modelTreeWidget, &STEPModelTreeWidget::partVisibilityChanged,
+            this, &ModelTreeDockWidget::onPartVisibilityChanged);
 }
 
 ModelTreeDockWidget::~ModelTreeDockWidget() = default;
@@ -158,13 +154,12 @@ void ModelTreeDockWidget::setupDisplayOptions()
     transparencyLayout->addWidget(m_transparencySpin);
     m_displayLayout->addLayout(transparencyLayout);
 
-    // 连接信号
-    connect(m_showAssembliesCheck, &QCheckBox::toggled,
-            this, &ModelTreeDockWidget::onShowAssembliesChanged);
-    connect(m_showPartsCheck, &QCheckBox::toggled,
-            this, &ModelTreeDockWidget::onShowPartsChanged);
-    connect(m_transparencySlider, &QSlider::valueChanged,
-            this, &ModelTreeDockWidget::onTransparencyChanged);
+    // 连接信号 - 这些功能暂时禁用，保留UI但不连接
+    // TODO: 未来可以实现这些功能
+    m_showAssembliesCheck->setEnabled(false);
+    m_showPartsCheck->setEnabled(false);
+    m_transparencySlider->setEnabled(false);
+    m_transparencySpin->setEnabled(false);
 }
 
 void ModelTreeDockWidget::loadSTEPFile(const QString& filePath)
@@ -184,16 +179,11 @@ void ModelTreeDockWidget::loadSTEPFile(const QString& filePath)
     m_collapseAllButton->setEnabled(false);
     m_refreshButton->setEnabled(false);
 
-    // 开始加载
-    m_modelTreeWidget->loadSTEPFile(filePath);
-}
-
-std::vector<TopoDS_Shape> ModelTreeDockWidget::getVisibleShapes() const
-{
-    if (m_modelTreeWidget && m_modelTreeWidget->getModelTree()) {
-        return m_modelTreeWidget->getModelTree()->getVisibleShapes();
-    }
-    return {};
+    // 开始加载（同步加载）
+    bool success = m_modelTreeWidget->loadSTEPFile(filePath);
+    
+    // 加载完成后立即更新状态
+    onModelTreeLoaded(success, success ? tr("加载成功") : tr("加载失败"));
 }
 
 void ModelTreeDockWidget::onModelTreeLoaded(bool success, const QString& message)
@@ -212,8 +202,7 @@ void ModelTreeDockWidget::onModelTreeLoaded(bool success, const QString& message
         m_collapseAllButton->setEnabled(true);
         m_refreshButton->setEnabled(true);
         
-        // 发送初始可见形状
-        emit modelVisibilityChanged(getVisibleShapes());
+        emit renderUpdateRequested();
         
     } else {
         m_loadStatusLabel->setText(tr("加载失败"));
@@ -221,68 +210,43 @@ void ModelTreeDockWidget::onModelTreeLoaded(bool success, const QString& message
     }
 }
 
-void ModelTreeDockWidget::onLoadProgress(int progress, const QString& message)
-{
-    m_loadProgressBar->setValue(progress);
-    m_loadStatusLabel->setText(message);
-}
-
-void ModelTreeDockWidget::onVisibilityChanged(const std::vector<TopoDS_Shape>& visibleShapes)
-{
-    m_visibleNodes = static_cast<int>(visibleShapes.size());
-    updateStatistics();
-    
-    emit modelVisibilityChanged(visibleShapes);
-    emit renderUpdateRequested();
-}
-
-void ModelTreeDockWidget::onSelectionChanged(const std::vector<std::shared_ptr<STEPTreeNode>>& selectedNodes)
-{
-    m_selectedNodes = static_cast<int>(selectedNodes.size());
-    updateStatistics();
-    
-    // 收集选中节点的形状
-    std::vector<TopoDS_Shape> selectedShapes;
-    for (const auto& node : selectedNodes) {
-        if (!node->shape.IsNull()) {
-            selectedShapes.push_back(node->shape);
-        }
-    }
-    
-    emit modelSelectionChanged(selectedShapes);
-}
-
 void ModelTreeDockWidget::onShowAllClicked()
 {
-    if (m_modelTreeWidget && m_modelTreeWidget->getModelTree()) {
-        auto rootNode = m_modelTreeWidget->getModelTree()->getRootNode();
-        if (rootNode) {
-            m_modelTreeWidget->getModelTree()->setNodeVisibility(rootNode, true, true);
+    if (m_modelTreeWidget && m_modelTreeWidget->getTreeWidget()) {
+        QTreeWidget* tree = m_modelTreeWidget->getTreeWidget();
+        QTreeWidgetItemIterator it(tree);
+        while (*it) {
+            (*it)->setCheckState(0, Qt::Checked);
+            ++it;
         }
+        emit renderUpdateRequested();
     }
 }
 
 void ModelTreeDockWidget::onHideAllClicked()
 {
-    if (m_modelTreeWidget && m_modelTreeWidget->getModelTree()) {
-        auto rootNode = m_modelTreeWidget->getModelTree()->getRootNode();
-        if (rootNode) {
-            m_modelTreeWidget->getModelTree()->setNodeVisibility(rootNode, false, true);
+    if (m_modelTreeWidget && m_modelTreeWidget->getTreeWidget()) {
+        QTreeWidget* tree = m_modelTreeWidget->getTreeWidget();
+        QTreeWidgetItemIterator it(tree);
+        while (*it) {
+            (*it)->setCheckState(0, Qt::Unchecked);
+            ++it;
         }
+        emit renderUpdateRequested();
     }
 }
 
 void ModelTreeDockWidget::onExpandAllClicked()
 {
-    if (m_modelTreeWidget) {
-        m_modelTreeWidget->getTreeView()->expandAll();
+    if (m_modelTreeWidget && m_modelTreeWidget->getTreeWidget()) {
+        m_modelTreeWidget->getTreeWidget()->expandAll();
     }
 }
 
 void ModelTreeDockWidget::onCollapseAllClicked()
 {
-    if (m_modelTreeWidget) {
-        m_modelTreeWidget->getTreeView()->collapseAll();
+    if (m_modelTreeWidget && m_modelTreeWidget->getTreeWidget()) {
+        m_modelTreeWidget->getTreeWidget()->collapseAll();
     }
 }
 
@@ -293,33 +257,34 @@ void ModelTreeDockWidget::onRefreshClicked()
     }
 }
 
-void ModelTreeDockWidget::onShowAssembliesChanged(bool show)
+void ModelTreeDockWidget::onPartVisibilityChanged(const QString& partName, bool visible)
 {
-    Q_UNUSED(show)
-    // TODO: 实现装配体显示/隐藏逻辑
-    qDebug() << "Show assemblies changed:" << show;
-}
-
-void ModelTreeDockWidget::onShowPartsChanged(bool show)
-{
-    Q_UNUSED(show)
-    // TODO: 实现零件显示/隐藏逻辑
-    qDebug() << "Show parts changed:" << show;
-}
-
-void ModelTreeDockWidget::onTransparencyChanged(int value)
-{
-    Q_UNUSED(value)
-    // TODO: 实现透明度变化逻辑
-    qDebug() << "Transparency changed:" << value;
+    qDebug() << "ModelTreeDockWidget: 部件可见性变化:" << partName << visible;
+    updateStatistics();
     emit renderUpdateRequested();
 }
 
 void ModelTreeDockWidget::updateStatistics()
 {
-    if (m_modelTreeWidget && m_modelTreeWidget->getModelTree()) {
-        auto stats = m_modelTreeWidget->getModelTree()->getModelStats();
-        m_totalNodes = stats.totalNodes;
+    if (m_modelTreeWidget && m_modelTreeWidget->getTreeWidget()) {
+        QTreeWidget* tree = m_modelTreeWidget->getTreeWidget();
+        
+        // 统计总节点数
+        m_totalNodes = 0;
+        m_visibleNodes = 0;
+        m_selectedNodes = 0;
+        
+        QTreeWidgetItemIterator it(tree);
+        while (*it) {
+            m_totalNodes++;
+            if ((*it)->checkState(0) == Qt::Checked) {
+                m_visibleNodes++;
+            }
+            if ((*it)->isSelected()) {
+                m_selectedNodes++;
+            }
+            ++it;
+        }
         
         m_totalNodesLabel->setText(tr("总节点: %1").arg(m_totalNodes));
         m_visibleNodesLabel->setText(tr("可见节点: %1").arg(m_visibleNodes));

@@ -36,39 +36,13 @@
 // Forward declarations for OpenCASCADE
 class TopoDS_Shape;
 
-// Forward declarations for STEP Model Tree
-struct STEPTreeNode;
-
 // Forward declarations for UI
 namespace UI {
     class StatusPanel;
 }
 
-// STEP加载质量选项
-enum class LoadQuality {
-    Fast,      // 快速预览 (deflection = 5.0)
-    Balanced,  // 平衡模式 (deflection = 2.0) 
-    High       // 高质量   (deflection = 0.3)
-};
-
-// 异步STEP加载工作线程
-class STEPLoaderWorker : public QObject
-{
-    Q_OBJECT
-    
-public:
-    explicit STEPLoaderWorker(QObject* parent = nullptr) : QObject(parent) {}
-    
-public slots:
-    void loadSTEPFile(const QString& filePath, LoadQuality quality = LoadQuality::Balanced);
-    
-signals:
-    void stepLoaded(vtkSmartPointer<vtkPolyData> polyData, const QString& modelName);
-    void stepLoadFailed(const QString& error);
-    void progressUpdate(const QString& message);
-    void progressPercentage(int percentage);
-    void timeStatistics(const QString& stage, int elapsedMs);
-};
+// Forward declaration for STEP Model Tree Widget
+class STEPModelTreeWidget;
 
 namespace UI {
 
@@ -90,8 +64,7 @@ public:
     ~VTKWidget();
 
     // 模型加载
-    bool LoadSTEPModel(const QString& filePath, LoadQuality quality = LoadQuality::Balanced);
-    bool LoadSTEPModelWithTree(const QString& filePath, std::shared_ptr<STEPTreeNode> rootNode, LoadQuality quality = LoadQuality::Balanced);  // 新增：支持模型树的加载
+    bool LoadSTEPModel(const QString& filePath, STEPModelTreeWidget* treeWidget = nullptr);
     bool LoadSTLModel(const QString& filePath);
     bool LoadPointCloud(const QString& filePath);
     bool LoadRobotModel(const QString& urdfPath);
@@ -114,7 +87,10 @@ public:
     void SetWorkpieceVisible(bool visible);
     void SetRobotVisible(bool visible);
     void SetTrajectoryVisible(bool visible);
-    void RefreshRender();  // 新增：刷新渲染
+    void RefreshRender();  // 刷新渲染
+    
+    // 获取渲染器
+    vtkRenderer* getRenderer() const { return m_renderer; }
     
     // 系统日志接口
     void SetStatusPanel(StatusPanel* statusPanel);
@@ -131,13 +107,6 @@ private slots:
     void OnToggleWorkpiece();
     void OnToggleRobot();
     void updateRobotAnimation();
-    
-    // 异步STEP加载槽函数
-    void onSTEPLoaded(vtkSmartPointer<vtkPolyData> polyData, const QString& modelName);
-    void onSTEPLoadFailed(const QString& error);
-    void onSTEPLoadProgress(const QString& message);
-    void onSTEPLoadProgressPercentage(int percentage);
-    void onTimeStatistics(const QString& stage, int elapsedMs);
 
 private:
     void setupUI();
@@ -149,41 +118,6 @@ private:
      * @brief 创建备用测试点云（当文件读取失败时）
      */
     bool CreateFallbackPointCloud();
-    
-    /**
-     * @brief 转换OpenCASCADE Shape为VTK PolyData
-     */
-    vtkSmartPointer<vtkPolyData> ConvertOCCTToVTK(const TopoDS_Shape& shape);
-    
-    /**
-     * @brief 从PolyData创建VTK Actor并添加到场景
-     */
-    bool CreateVTKActorFromPolyData(vtkSmartPointer<vtkPolyData> polyData, const QString& modelName);
-    
-    /**
-     * @brief 为STEP节点创建VTK Actor（递归）
-     */
-    void CreateActorsForSTEPNode(std::shared_ptr<STEPTreeNode> node);
-    
-    /**
-     * @brief 统计创建的Actor数量
-     */
-    int CountActors(std::shared_ptr<STEPTreeNode> node);
-    
-    /**
-     * @brief 输出没有创建Actor的节点信息
-     */
-    void PrintNodesWithoutActors(std::shared_ptr<STEPTreeNode> node, int depth = 0);
-    
-    /**
-     * @brief 异步加载STEP文件
-     */
-    void LoadSTEPModelAsync(const QString& filePath, LoadQuality quality = LoadQuality::Balanced);
-    
-    /**
-     * @brief 同步加载STEP文件（原实现）
-     */
-    bool LoadSTEPModelSync(const QString& filePath);
 
 private:
     // UI组件
@@ -230,12 +164,6 @@ private:
     double m_robotCurrentPose[6];
     int m_animationSteps;
     int m_currentAnimationStep;
-    
-    // 异步STEP加载
-    QThread* m_stepLoaderThread;
-    STEPLoaderWorker* m_stepLoaderWorker;
-    QMutex m_loadingMutex;
-    bool m_isLoading;
     
     // 系统日志面板
     StatusPanel* m_statusPanel;

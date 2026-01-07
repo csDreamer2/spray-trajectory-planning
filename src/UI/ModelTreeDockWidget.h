@@ -38,25 +38,7 @@ public:
      */
     STEPModelTreeWidget* getModelTreeWidget() const { return m_modelTreeWidget; }
 
-    /**
-     * @brief 获取当前可见的形状
-     * @return 可见形状列表
-     */
-    std::vector<TopoDS_Shape> getVisibleShapes() const;
-
 signals:
-    /**
-     * @brief 模型可见性改变信号
-     * @param visibleShapes 当前可见的形状列表
-     */
-    void modelVisibilityChanged(const std::vector<TopoDS_Shape>& visibleShapes);
-
-    /**
-     * @brief 选中模型改变信号
-     * @param selectedShapes 选中的形状列表
-     */
-    void modelSelectionChanged(const std::vector<TopoDS_Shape>& selectedShapes);
-
     /**
      * @brief 请求重新渲染信号
      */
@@ -64,9 +46,7 @@ signals:
 
 private slots:
     void onModelTreeLoaded(bool success, const QString& message);
-    void onLoadProgress(int progress, const QString& message);
-    void onVisibilityChanged(const std::vector<TopoDS_Shape>& visibleShapes);
-    void onSelectionChanged(const std::vector<std::shared_ptr<STEPTreeNode>>& selectedNodes);
+    void onPartVisibilityChanged(const QString& partName, bool visible);
     
     // 控制按钮槽函数
     void onShowAllClicked();
@@ -74,11 +54,6 @@ private slots:
     void onExpandAllClicked();
     void onCollapseAllClicked();
     void onRefreshClicked();
-    
-    // 显示选项槽函数
-    void onShowAssembliesChanged(bool show);
-    void onShowPartsChanged(bool show);
-    void onTransparencyChanged(int value);
 
 private:
     void setupUI();
