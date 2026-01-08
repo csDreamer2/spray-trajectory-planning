@@ -30,6 +30,7 @@
 #include <vtkSTLReader.h>
 #include <vtkTransform.h>
 #include <QTimer>
+#include <vtkMatrix4x4.h>
 #include <QThread>
 #include <QMutex>
 #include <array>

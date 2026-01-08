@@ -599,66 +599,127 @@ void VTKWidget::updateRobotAnimation()
 
 void VTKWidget::UpdateRobotJoints(const std::array<double, 6>& jointAngles)
 {
-    // TODO: 实现完整的6轴机器人关节变换
-    // 当前使用简化的末端位姿变换作为演示
-    // 实际应用中需要根据机器人DH参数计算各关节的变换矩阵
+    // 使用DH参数计算每个关节的变换矩阵
+    // TODO: 更新为 MPX3500 机器人的实际 DH 参数
     
-    // 简化演示：将关节角度映射到末端位姿变换
-    // J1: 基座旋转 -> 绕Z轴旋转
-    // J2: 肩部 -> 影响Z高度
-    // J3: 肘部 -> 影响前伸距离
-    // J4-J6: 手腕 -> 末端姿态
+    const double DEG_TO_RAD = M_PI / 180.0;
     
-    double baseRotation = jointAngles[0];  // J1 基座旋转
-    double shoulderAngle = jointAngles[1]; // J2 肩部
-    double elbowAngle = jointAngles[2];    // J3 肘部
-    double wristRoll = jointAngles[3];     // J4 手腕旋转
-    double wristPitch = jointAngles[4];    // J5 手腕俯仰
-    double wristYaw = jointAngles[5];      // J6 末端旋转
+    // DH参数表：a(mm), alpha(rad), d(mm), theta_offset(rad)
+    // 这些是占位符参数，需要根据 MPX3500 规格更新
+    struct DHParam {
+        double a, alpha, d, theta_offset;
+    };
     
-    // 简化的运动学计算（仅用于演示）
-    // 实际应用需要使用完整的DH参数计算
-    double armLength1 = 680.0;  // 大臂长度 mm
-    double armLength2 = 680.0;  // 小臂长度 mm
+    const DHParam dhParams[6] = {
+        {0,      -M_PI/2, 0,    0},      // J1: 待更新
+        {0,      0,       0,    0},      // J2: 待更新
+        {0,      -M_PI/2, 0,    0},      // J3: 待更新
+        {0,      M_PI/2,  0,    0},      // J4: 待更新
+        {0,      -M_PI/2, 0,    0},      // J5: 待更新
+        {0,      0,       0,    0}       // J6: 待更新
+    };
     
-    // 计算末端位置（简化）
-    double rad = M_PI / 180.0;
-    double reach = armLength1 * cos(shoulderAngle * rad) + armLength2 * cos((shoulderAngle + elbowAngle) * rad);
-    double height = 330.0 + armLength1 * sin(shoulderAngle * rad) + armLength2 * sin((shoulderAngle + elbowAngle) * rad);
+    // 部件名称映射
+    const QString partNames[6] = {"NAUO1", "NAUO2", "NAUO3", "NAUO4", "NAUO5", "NAUO6"};
     
-    double x = reach * cos(baseRotation * rad);
-    double y = reach * sin(baseRotation * rad);
-    double z = height;
-    
-    // 如果有专用机器人Actor，应用变换
-    if (m_robotActor) {
-        m_robotTransform->Identity();
-        m_robotTransform->Translate(x, y, z);
-        m_robotTransform->RotateZ(baseRotation);
-        m_robotTransform->RotateY(wristPitch);
-        m_robotTransform->RotateX(wristRoll);
-        m_robotTransform->RotateZ(wristYaw);
+    if (m_modelTreeWidget) {
+        // 计算从基座到各关节的累积变换矩阵
+        vtkSmartPointer<vtkTransform> cumulativeTransform = vtkSmartPointer<vtkTransform>::New();
+        cumulativeTransform->Identity();
         
-        m_robotActor->SetUserTransform(m_robotTransform);
+        for (int i = 0; i < 6; ++i) {
+            const DHParam& dh = dhParams[i];
+            double theta = jointAngles[i] * DEG_TO_RAD + dh.theta_offset;
+            
+            // DH变换矩阵 = Rot_Z(theta) * Trans_Z(d) * Trans_X(a) * Rot_X(alpha)
+            vtkSmartPointer<vtkTransform> jointTransform = vtkSmartPointer<vtkTransform>::New();
+            jointTransform->Identity();
+            
+            // 应用DH变换
+            double ct = cos(theta);
+            double st = sin(theta);
+            double ca = cos(dh.alpha);
+            double sa = sin(dh.alpha);
+            
+            // 构建4x4变换矩阵
+            vtkSmartPointer<vtkMatrix4x4> matrix = vtkSmartPointer<vtkMatrix4x4>::New();
+            matrix->SetElement(0, 0, ct);
+            matrix->SetElement(0, 1, -st * ca);
+            matrix->SetElement(0, 2, st * sa);
+            matrix->SetElement(0, 3, dh.a * ct);
+            
+            matrix->SetElement(1, 0, st);
+            matrix->SetElement(1, 1, ct * ca);
+            matrix->SetElement(1, 2, -ct * sa);
+            matrix->SetElement(1, 3, dh.a * st);
+            
+            matrix->SetElement(2, 0, 0);
+            matrix->SetElement(2, 1, sa);
+            matrix->SetElement(2, 2, ca);
+            matrix->SetElement(2, 3, dh.d);
+            
+            matrix->SetElement(3, 0, 0);
+            matrix->SetElement(3, 1, 0);
+            matrix->SetElement(3, 2, 0);
+            matrix->SetElement(3, 3, 1);
+            
+            jointTransform->SetMatrix(matrix);
+            
+            // 累积变换
+            cumulativeTransform->Concatenate(jointTransform);
+            
+            // 应用变换到对应的部件
+            m_modelTreeWidget->applyTransformToActor(partNames[i], cumulativeTransform);
+            
+            qDebug() << "VTKWidget: 应用变换到" << partNames[i] 
+                     << "- 关节角度:" << jointAngles[i] << "°";
+        }
+        
         m_renderWindow->Render();
     }
-    // 如果有STEP模型树，应用变换到各个关节
-    else if (m_modelTreeWidget) {
-        // 对各个关节应用单独的变换
-        // NAUO1: 基座 - 绕Z轴旋转
-        vtkSmartPointer<vtkTransform> baseTransform = vtkSmartPointer<vtkTransform>::New();
-        baseTransform->Identity();
-        baseTransform->RotateZ(baseRotation);
-        m_modelTreeWidget->applyTransformToActor("NAUO1", baseTransform);
+    else if (m_robotActor) {
+        // 如果有专用机器人Actor，计算末端位姿
+        vtkSmartPointer<vtkTransform> endEffectorTransform = vtkSmartPointer<vtkTransform>::New();
+        endEffectorTransform->Identity();
         
-        // NAUO2-NAUO7: 其他关节 - 暂时不变换（需要完整的DH参数）
-        // 这里可以后续添加更复杂的关节变换
+        for (int i = 0; i < 6; ++i) {
+            const DHParam& dh = dhParams[i];
+            double theta = jointAngles[i] * DEG_TO_RAD + dh.theta_offset;
+            
+            vtkSmartPointer<vtkTransform> jointTransform = vtkSmartPointer<vtkTransform>::New();
+            jointTransform->Identity();
+            
+            double ct = cos(theta);
+            double st = sin(theta);
+            double ca = cos(dh.alpha);
+            double sa = sin(dh.alpha);
+            
+            vtkSmartPointer<vtkMatrix4x4> matrix = vtkSmartPointer<vtkMatrix4x4>::New();
+            matrix->SetElement(0, 0, ct);
+            matrix->SetElement(0, 1, -st * ca);
+            matrix->SetElement(0, 2, st * sa);
+            matrix->SetElement(0, 3, dh.a * ct);
+            
+            matrix->SetElement(1, 0, st);
+            matrix->SetElement(1, 1, ct * ca);
+            matrix->SetElement(1, 2, -ct * sa);
+            matrix->SetElement(1, 3, dh.a * st);
+            
+            matrix->SetElement(2, 0, 0);
+            matrix->SetElement(2, 1, sa);
+            matrix->SetElement(2, 2, ca);
+            matrix->SetElement(2, 3, dh.d);
+            
+            matrix->SetElement(3, 0, 0);
+            matrix->SetElement(3, 1, 0);
+            matrix->SetElement(3, 2, 0);
+            matrix->SetElement(3, 3, 1);
+            
+            jointTransform->SetMatrix(matrix);
+            endEffectorTransform->Concatenate(jointTransform);
+        }
         
-        qDebug() << "VTKWidget: 应用关节变换到STEP模型 -"
-                 << "J1(基座旋转):" << baseRotation << "°"
-                 << "J2(肩部):" << shoulderAngle << "°"
-                 << "J3(肘部):" << elbowAngle << "°";
-        
+        m_robotActor->SetUserTransform(endEffectorTransform);
         m_renderWindow->Render();
     }
     else {

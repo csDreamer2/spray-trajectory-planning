@@ -26,6 +26,7 @@ Q_DECLARE_METATYPE(ShapeMap)
 
 // VTK includes (需要完整定义)
 #include <vtkRenderer.h>
+#include <vtkRenderWindow.h>
 
 // VTK XML读写
 #include <vtkXMLPolyDataWriter.h>
@@ -978,6 +979,19 @@ void STEPModelTreeWidget::onLoadFinished(bool success, const QString& message,
         if (m_renderer) {
             addActorsToRenderer(m_renderer);
             qDebug() << "STEPModelTreeWidget: 自动添加Actor到渲染器";
+            
+            // 重置相机以显示完整模型
+            m_renderer->ResetCamera();
+            m_renderer->ResetCameraClippingRange();
+            
+            // 触发渲染
+            vtkRenderWindow* renderWindow = m_renderer->GetRenderWindow();
+            if (renderWindow) {
+                renderWindow->Render();
+                qDebug() << "STEPModelTreeWidget: 渲染窗口已刷新";
+            }
+            
+            qDebug() << "STEPModelTreeWidget: 相机已重置";
         }
         
         // 如果有缓存路径，保存缓存
